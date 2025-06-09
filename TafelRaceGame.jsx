@@ -1023,40 +1023,57 @@ function StatisticsPage({ currentPlayer, onBack }) {
       height: "100vh",
       background: "rgba(0,0,0,0.9)",
       color: "#fff",
-      fontSize: 16,
-      padding: "20px",
+      fontSize: "clamp(14px, 2.5vw, 16px)", // Responsive base font
+      padding: "clamp(10px, 3vw, 20px)", // Responsive padding
       overflowY: "auto",
       zIndex: 40,
     }}>
       <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
+        {/* Header Section */}
         <div style={{ 
           display: "flex", 
           justifyContent: "space-between", 
-          alignItems: "center", 
-          marginBottom: 30,
+          alignItems: "flex-start", // Changed from center for better mobile layout
+          marginBottom: "clamp(20px, 4vh, 30px)",
           flexWrap: "wrap",
-          gap: "20px"
+          gap: "15px"
         }}>
-          <div>
-            <h1 style={{ fontSize: 36, marginBottom: 10, color: "#4CAF50" }}>
+          <div style={{ flex: "1", minWidth: "250px" }}>
+            <h1 style={{ 
+              fontSize: "clamp(24px, 6vw, 36px)", // Responsive title
+              marginBottom: "clamp(8px, 2vh, 10px)", 
+              color: "#4CAF50",
+              lineHeight: 1.2
+            }}>
               📊 Statistieken - {currentPlayer}
             </h1>
-            <div style={{ fontSize: 18, color: "#ccc" }}>
+            <div style={{ 
+              fontSize: "clamp(14px, 3vw, 18px)", // Responsive subtitle
+              color: "#ccc",
+              lineHeight: 1.3
+            }}>
               Totaal: {totalAttempts} pogingen | {totalMistakes} fouten | {overallSuccessRate}% correct
             </div>
           </div>
           
-          <div style={{ display: "flex", gap: "15px" }}>
+          <div style={{ 
+            display: "flex", 
+            gap: "10px",
+            flexWrap: "wrap",
+            justifyContent: "flex-end"
+          }}>
             <button
               style={{
-                fontSize: 20,
-                padding: "10px 25px",
+                fontSize: "clamp(16px, 3.5vw, 20px)",
+                padding: "clamp(8px, 2vw, 10px) clamp(15px, 4vw, 25px)",
                 borderRadius: 8,
                 border: "2px solid #666",
                 background: "transparent",
                 color: "#fff",
                 fontWeight: 600,
                 cursor: "pointer",
+                touchAction: "manipulation",
+                minWidth: "80px"
               }}
               onClick={onBack}
             >
@@ -1064,14 +1081,16 @@ function StatisticsPage({ currentPlayer, onBack }) {
             </button>
             <button
               style={{
-                fontSize: 20,
-                padding: "10px 25px",
+                fontSize: "clamp(16px, 3.5vw, 20px)",
+                padding: "clamp(8px, 2vw, 10px) clamp(15px, 4vw, 25px)",
                 borderRadius: 8,
                 border: "2px solid #ff4444",
                 background: "transparent",
                 color: "#ff4444",
                 fontWeight: 600,
                 cursor: "pointer",
+                touchAction: "manipulation",
+                minWidth: "80px"
               }}
               onClick={handleReset}
             >
@@ -1080,31 +1099,42 @@ function StatisticsPage({ currentPlayer, onBack }) {
           </div>
         </div>
 
+        {/* Multiplication Table Grid */}
         <div style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
-          gap: "2px",
+          gridTemplateColumns: "repeat(11, 1fr)", // Fixed 11 columns (header + 10 numbers)
+          gap: "1px",
           background: "#333",
-          padding: "2px",
+          padding: "1px",
           borderRadius: 8,
+          marginBottom: "clamp(15px, 3vh, 20px)",
+          fontSize: "clamp(10px, 2vw, 14px)" // Responsive grid font
         }}>
           {/* Header row */}
           <div style={{ 
             background: "#555", 
-            padding: "8px", 
+            padding: "clamp(4px, 1.5vw, 8px)", 
             fontWeight: "bold", 
             textAlign: "center",
-            fontSize: 14
+            fontSize: "clamp(12px, 2.5vw, 14px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: "clamp(35px, 8vw, 60px)"
           }}>
             ×
           </div>
           {[1,2,3,4,5,6,7,8,9,10].map(num => (
             <div key={num} style={{ 
               background: "#555", 
-              padding: "8px", 
+              padding: "clamp(4px, 1.5vw, 8px)", 
               fontWeight: "bold", 
               textAlign: "center",
-              fontSize: 14
+              fontSize: "clamp(12px, 2.5vw, 14px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: "clamp(35px, 8vw, 60px)"
             }}>
               {num}
             </div>
@@ -1116,10 +1146,14 @@ function StatisticsPage({ currentPlayer, onBack }) {
               {/* Row header */}
               <div style={{ 
                 background: "#555", 
-                padding: "8px", 
+                padding: "clamp(4px, 1.5vw, 8px)", 
                 fontWeight: "bold", 
                 textAlign: "center",
-                fontSize: 14
+                fontSize: "clamp(12px, 2.5vw, 14px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                minHeight: "clamp(35px, 8vw, 60px)"
               }}>
                 {table}
               </div>
@@ -1143,27 +1177,41 @@ function StatisticsPage({ currentPlayer, onBack }) {
                     key={multiplier}
                     style={{ 
                       background: bgColor,
-                      padding: "8px 4px",
+                      padding: "clamp(2px, 1vw, 4px)",
                       textAlign: "center",
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                      minHeight: "60px",
+                      fontSize: "clamp(10px, 2vw, 12px)",
+                      lineHeight: 1.1,
+                      minHeight: "clamp(35px, 8vw, 60px)",
                       display: "flex",
                       flexDirection: "column",
-                      justifyContent: "center"
+                      justifyContent: "center",
+                      alignItems: "center",
+                      cursor: "pointer"
                     }}
                     title={`${question} = ${table * multiplier}\nPogingen: ${stats.attempts}\nFouten: ${stats.mistakes}\nSucces: ${stats.attempts > 0 ? (successRate * 100).toFixed(1) : 0}%`}
                   >
-                    <div style={{ fontWeight: "bold", fontSize: 14 }}>
+                    <div style={{ 
+                      fontWeight: "bold", 
+                      fontSize: "clamp(11px, 2.2vw, 14px)",
+                      marginBottom: stats.attempts > 0 ? "1px" : "0"
+                    }}>
                       {table * multiplier}
                     </div>
                     {stats.attempts > 0 && (
                       <>
-                        <div style={{ fontSize: 10, color: "#ccc" }}>
+                        <div style={{ 
+                          fontSize: "clamp(8px, 1.5vw, 10px)", 
+                          color: "#ccc",
+                          lineHeight: 1
+                        }}>
                           {stats.attempts}×
                         </div>
                         {stats.mistakes > 0 && (
-                          <div style={{ fontSize: 10, color: "#ff6666" }}>
+                          <div style={{ 
+                            fontSize: "clamp(8px, 1.5vw, 10px)", 
+                            color: "#ff6666",
+                            lineHeight: 1
+                          }}>
                             {stats.mistakes}✗
                           </div>
                         )}
@@ -1176,34 +1224,70 @@ function StatisticsPage({ currentPlayer, onBack }) {
           ))}
         </div>
 
+        {/* Legend */}
         <div style={{ 
-          marginTop: 20, 
-          padding: 15, 
+          marginTop: "clamp(15px, 3vh, 20px)", 
+          padding: "clamp(12px, 3vw, 15px)", 
           background: "rgba(255,255,255,0.1)", 
           borderRadius: 8,
-          fontSize: 14 
+          fontSize: "clamp(12px, 2.5vw, 14px)"
         }}>
-          <strong>Legenda:</strong>
-          <div style={{ display: "flex", gap: "20px", marginTop: 8, flexWrap: "wrap" }}>
+          <strong style={{ fontSize: "clamp(14px, 3vw, 16px)" }}>Legenda:</strong>
+          <div style={{ 
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", // Responsive grid
+            gap: "clamp(10px, 2vw, 20px)", 
+            marginTop: "clamp(8px, 2vw, 12px)"
+          }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ width: 20, height: 20, background: "#222", borderRadius: 3 }}></div>
-              Niet geprobeerd
+              <div style={{ 
+                width: "clamp(16px, 4vw, 20px)", 
+                height: "clamp(16px, 4vw, 20px)", 
+                background: "#222", 
+                borderRadius: 3,
+                flexShrink: 0
+              }}></div>
+              <span>Niet geprobeerd</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ width: 20, height: 20, background: "#2d5a2d", borderRadius: 3 }}></div>
-              90%+ correct
+              <div style={{ 
+                width: "clamp(16px, 4vw, 20px)", 
+                height: "clamp(16px, 4vw, 20px)", 
+                background: "#2d5a2d", 
+                borderRadius: 3,
+                flexShrink: 0
+              }}></div>
+              <span>90%+ correct</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ width: 20, height: 20, background: "#5a5a2d", borderRadius: 3 }}></div>
-              70-89% correct
+              <div style={{ 
+                width: "clamp(16px, 4vw, 20px)", 
+                height: "clamp(16px, 4vw, 20px)", 
+                background: "#5a5a2d", 
+                borderRadius: 3,
+                flexShrink: 0
+              }}></div>
+              <span>70-89% correct</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ width: 20, height: 20, background: "#5a4a2d", borderRadius: 3 }}></div>
-              50-69% correct
+              <div style={{ 
+                width: "clamp(16px, 4vw, 20px)", 
+                height: "clamp(16px, 4vw, 20px)", 
+                background: "#5a4a2d", 
+                borderRadius: 3,
+                flexShrink: 0
+              }}></div>
+              <span>50-69% correct</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ width: 20, height: 20, background: "#5a2d2d", borderRadius: 3 }}></div>
-              &lt;50% correct
+              <div style={{ 
+                width: "clamp(16px, 4vw, 20px)", 
+                height: "clamp(16px, 4vw, 20px)", 
+                background: "#5a2d2d", 
+                borderRadius: 3,
+                flexShrink: 0
+              }}></div>
+              <span>&lt;50% correct</span>
             </div>
           </div>
         </div>
