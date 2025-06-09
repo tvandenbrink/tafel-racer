@@ -1222,6 +1222,8 @@ function GameLogic({
   speedBoost, questionsAnswered, setQuestionsAnswered, pendingRepeats, setPendingRepeats,
   setIncorrectAnswers, setRedFlash, currentPlayer, setGreenFlash, setShowCorrectAnswer, setCorrectAnswerDisplay
 }) {
+  const lastObstacleSpawnTimeRef = useRef(0); // Track last obstacle spawn time
+
   useFrame(() => {
     if (phase !== "play") return;
 
@@ -1388,82 +1390,77 @@ function GameLogic({
     return () => clearInterval(t);
   }, [phase, lanes, gateIntervalMs, blockStartZ, answerBlocks.length, questionsAnswered, currentPlayer]);
 
-  // Improved obstacle spawning with proper gate avoidance
+  // Improved obstacle spawning with proper timing and location controls
   useEffect(() => {
     if (phase !== "play") return;
     
     const maxTrafficCars = Math.max(1, Math.floor(lanes / 2));
-    const SPAWN_INTERVAL = 2500; // Slightly faster spawning
-    const OBSTACLE_SPAWN_Z = -120; // Spawn further back than gates
+    const OBSTACLE_SPAWN_INTERVAL = 2500; // How often we check for spawning
+    const OBSTACLE_SPAWN_Z = blockStartZ; // Spawn at same location as gates
+    const OBSTACLE_RATE_COOLDOWN = 2000; // Min 2 seconds between obstacle spawns
+    const GATE_SPAWN_BUFFER = 2000; // Don't spawn obstacles 2s before/after gates
     
     const t = setInterval(() => {
-      setObstacles((obs) => {
-        // Count active obstacles (those still visible)
-        const activeCars = obs.filter((o) => o.z > -150).length;
+      const now = Date.now();
+      
+      // 1. Rate Limit: Check if 2 seconds have passed since the last obstacle spawn
+      if (now - lastObstacleSpawnTimeRef.current < OBSTACLE_RATE_COOLDOWN) {
+        return;
+      }
+      
+      // 2. Gate Proximity: Check if too close to a gate spawn event
+      // Rule 2a: Too soon after the last gate set spawned
+      if (now - lastGateTime < GATE_SPAWN_BUFFER) {
+        return;
+      }
+      
+      // Rule 2b: Too soon before an imminently spawning gate set
+      // If no answer blocks are on screen, new gates are due based on gateIntervalMs
+      const effectiveGateSpawnInterval = Math.max(gateIntervalMs, 100);
+      if (answerBlocks.length === 0 && effectiveGateSpawnInterval < GATE_SPAWN_BUFFER) {
+        return;
+      }
+      
+      setObstacles((currentObs) => {
+        // 3. Max Traffic: Check if max number of obstacles already on screen
+        const activeCars = currentObs.filter((o) => o.z > OBSTACLE_SPAWN_Z - 50).length;
+        if (activeCars >= maxTrafficCars) {
+          return currentObs;
+        }
         
-        if (activeCars < maxTrafficCars) {
-          // Check if there are any active gates
-          const activeGates = answerBlocks.filter(gate => gate.z > -150);
-          
-          // Find available lanes (not blocked by gates or other obstacles)
-          const availableLanes = [];
-          
-          for (let lane = 0; lane < lanes; lane++) {
-            let laneBlocked = false;
-            
-            // Check if lane is blocked by a gate within protection distance
-            for (const gate of activeGates) {
-              if (gate.lane === lane) {
-                const distanceToGate = Math.abs(gate.z - OBSTACLE_SPAWN_Z);
-                if (distanceToGate < GATE_PROTECTION_DISTANCE) {
-                  laneBlocked = true;
-                  console.log(`Lane ${lane} blocked by gate at z=${gate.z.toFixed(1)}, distance=${distanceToGate.toFixed(1)}`);
-                  break;
-                }
-              }
-            }
-            
-            // Check if lane is blocked by another obstacle nearby
-            if (!laneBlocked) {
-              const nearbyObstacle = obs.find(obstacle => 
-                obstacle.lane === lane && 
-                Math.abs(obstacle.z - OBSTACLE_SPAWN_Z) < CAR_LENGTH * 2
-              );
-              if (nearbyObstacle) {
-                laneBlocked = true;
-                console.log(`Lane ${lane} blocked by nearby obstacle`);
-              }
-            }
-            
-            if (!laneBlocked) {
-              availableLanes.push(lane);
-            }
-          }
-          
-          // Spawn obstacle in a random available lane
-          if (availableLanes.length > 0) {
-            const selectedLane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
-            console.log(`Spawning traffic car in lane ${selectedLane} at z=${OBSTACLE_SPAWN_Z} (${availableLanes.length} lanes available)`);
-            
-            return [
-              ...obs,
-              {
-                lane: selectedLane,
-                z: OBSTACLE_SPAWN_Z,
-                id: Math.random().toString(36).slice(2),
-                colorIndex: obs.length % 5,
-              },
-            ];
-          } else {
-            console.log(`No available lanes for traffic spawn (${activeGates.length} active gates)`);
+        // 4. Lane Availability: Find lanes not occupied by other obstacles at spawn location
+        const availableLanes = [];
+        for (let lane = 0; lane < lanes; lane++) {
+          const isLaneOccupiedByObstacle = currentObs.some(
+            (obstacle) =>
+              obstacle.lane === lane &&
+              Math.abs(obstacle.z - OBSTACLE_SPAWN_Z) < CAR_LENGTH * 3 // Check 3 car lengths for spacing
+          );
+          if (!isLaneOccupiedByObstacle) {
+            availableLanes.push(lane);
           }
         }
-        return obs;
+        
+        if (availableLanes.length > 0) {
+          const selectedLane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
+          lastObstacleSpawnTimeRef.current = now; // Update last spawn time
+          
+          return [
+            ...currentObs,
+            {
+              lane: selectedLane,
+              z: OBSTACLE_SPAWN_Z,
+              id: Math.random().toString(36).slice(2),
+              colorIndex: currentObs.length % 5,
+            },
+          ];
+        }
+        return currentObs;
       });
-    }, SPAWN_INTERVAL);
+    }, OBSTACLE_SPAWN_INTERVAL);
     
     return () => clearInterval(t);
-  }, [phase, lanes, answerBlocks]); // Include answerBlocks dependency for gate tracking
+  }, [phase, lanes, blockStartZ, gateIntervalMs, lastGateTime, answerBlocks.length]);
 
   // Buffer management around gates
   useEffect(() => {
