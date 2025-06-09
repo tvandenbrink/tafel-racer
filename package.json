@@ -2,13 +2,13 @@
   "name": "tafel-racer",
   "version": "1.0.0",
   "type": "module",
+  "homepage": "https://tvandenbrink.github.io/tafel-racer",
   "scripts": {
-    "dev": "vite --port 3003",
+    "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --port 3004 --open",
-    "build-portable": "vite build && echo 'Build complete! Run: npm run preview'",
-    "serve": "vite preview --port 3004 --open",
-    "build-and-serve": "npm run build && npm run serve"
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "@react-three/drei": "^10.1.2",
@@ -18,7 +18,14 @@
     "three": "^0.177.0"
   },
   "devDependencies": {
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.5.1",
-    "vite": "^6.0.7"
+    "eslint": "^9.16.0",
+    "eslint-plugin-react": "^7.37.2",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "gh-pages": "^6.3.0",
+    "vite": "^6.0.0"
   }
 }
