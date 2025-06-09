@@ -324,6 +324,13 @@ function TafelRaceGame() {
   // --- Lane positions ---
   const laneX = (lane) => (lane - (lanes - 1) / 2) * 2.5; // Increased spacing from 2 to 2.5
 
+  // Add lane button handler
+  const handleLaneClick = useCallback((targetLane) => {
+    if (phase === "play") {
+      setCarLane(targetLane);
+    }
+  }, [phase]);
+
   // --- Render ---
   return (
     <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "#7ecbff" }}>
@@ -392,6 +399,130 @@ function TafelRaceGame() {
       {phase === "play" && currentQuestion && answerBlocks.length > 0 && (
         <div style={SOM_STYLE}>{currentQuestion}</div>
       )}
+
+      {/* Lane Control Buttons for Tablet/Touch Support */}
+      {phase === "play" && (
+        <div style={{
+          position: "absolute",
+          bottom: 20,
+          left: "50%",
+          transform: "translateX(-50%)",
+          display: "flex",
+          gap: "8px",
+          zIndex: 15,
+          padding: "10px",
+          background: "rgba(0, 0, 0, 0.3)",
+          borderRadius: 15,
+          backdropFilter: "blur(5px)",
+        }}>
+          {Array.from({ length: lanes }).map((_, index) => (
+            <button
+              key={index}
+              onClick={() => handleLaneClick(index)}
+              onTouchStart={(e) => {
+                e.preventDefault();
+                handleLaneClick(index);
+              }}
+              style={{
+                width: "60px",
+                height: "60px",
+                borderRadius: "12px",
+                border: carLane === index ? "4px solid #ff4141" : "2px solid #fff",
+                background: carLane === index ? "#ff4141" : "rgba(255, 255, 255, 0.8)",
+                color: carLane === index ? "#fff" : "#000",
+                fontSize: "24px",
+                fontWeight: "900",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.2s ease",
+                userSelect: "none",
+                touchAction: "manipulation",
+                boxShadow: carLane === index 
+                  ? "0 4px 12px rgba(255, 65, 65, 0.4)" 
+                  : "0 2px 8px rgba(0, 0, 0, 0.2)",
+                transform: carLane === index ? "scale(1.1)" : "scale(1)",
+              }}
+            >
+              {index + 1}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Speed Boost Button for Touch Devices */}
+      {phase === "play" && (
+        <div style={{
+          position: "absolute",
+          bottom: 100,
+          right: 20,
+          zIndex: 15,
+        }}>
+          <button
+            onTouchStart={(e) => {
+              e.preventDefault();
+              setSpeedBoost(true);
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              setSpeedBoost(false);
+            }}
+            onMouseDown={() => setSpeedBoost(true)}
+            onMouseUp={() => setSpeedBoost(false)}
+            onMouseLeave={() => setSpeedBoost(false)}
+            style={{
+              width: "80px",
+              height: "80px",
+              borderRadius: "50%",
+              border: "3px solid #fff",
+              background: speedBoost 
+                ? "linear-gradient(135deg, #ff6b6b, #ee5a52)" 
+                : "rgba(255, 255, 255, 0.8)",
+              color: speedBoost ? "#fff" : "#000",
+              fontSize: "16px",
+              fontWeight: "700",
+              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.2s ease",
+              userSelect: "none",
+              touchAction: "manipulation",
+              boxShadow: speedBoost 
+                ? "0 6px 20px rgba(255, 107, 107, 0.4)" 
+                : "0 4px 12px rgba(0, 0, 0, 0.2)",
+              transform: speedBoost ? "scale(1.1)" : "scale(1)",
+            }}
+          >
+            <div style={{ fontSize: "24px", marginBottom: "2px" }}>🚀</div>
+            <div style={{ fontSize: "12px" }}>BOOST</div>
+          </button>
+        </div>
+      )}
+
+      {/* Control Instructions for Touch Devices */}
+      {phase === "play" && (
+        <div style={{
+          position: "absolute",
+          top: 120,
+          left: 20,
+          background: "rgba(0, 0, 0, 0.6)",
+          color: "#fff",
+          fontSize: 14,
+          borderRadius: 8,
+          padding: "8px 12px",
+          zIndex: 10,
+          maxWidth: "200px",
+          lineHeight: 1.3,
+        }}>
+          <div style={{ fontWeight: "600", marginBottom: "4px" }}>🎮 Controls:</div>
+          <div>• Tap lane buttons to move</div>
+          <div>• Hold boost for speed</div>
+          <div>• Keyboard: ←→ + ↑</div>
+        </div>
+      )}
       
       {/* Countdown overlay */}
       {phase === "countdown" && (
@@ -436,7 +567,7 @@ function TafelRaceGame() {
           <div style={{ fontSize: 24, marginBottom: 30, color: "#ffd700" }}>
             High Score: {highScore}
           </div>
-          <div style={{ display: "flex", gap: "20px" }}>
+          <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", justifyContent: "center" }}>
             <button
               style={{
                 fontSize: 28,
@@ -447,6 +578,7 @@ function TafelRaceGame() {
                 color: "#fff",
                 fontWeight: 700,
                 cursor: "pointer",
+                touchAction: "manipulation",
               }}
               onClick={startGame}
             >
@@ -462,6 +594,7 @@ function TafelRaceGame() {
                 color: "#fff",
                 fontWeight: 700,
                 cursor: "pointer",
+                touchAction: "manipulation",
               }}
               onClick={backToSettings}
             >
