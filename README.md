@@ -2,6 +2,9 @@
 
 A 3D racing game designed to help children practice multiplication tables in an engaging and interactive way.
 
+## 🎮 Play Online
+**[Play Tafel Race Game](https://tvandenbrink.github.io/tafel-racer/)**
+
 ## Features
 
 - **3D Racing Environment**: Built with React Three Fiber for smooth 3D graphics
