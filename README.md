@@ -37,6 +37,11 @@ Open http://localhost:5173 to view the game.
 npm run build
 ```
 
+### Deploy to GitHub Pages
+```bash
+npm run deploy
+```
+
 ## How to Play
 
 1. **Select Player**: Choose your player (Floris, Esmee, or Tim)
@@ -57,6 +62,7 @@ npm run build
 - Three.js / React Three Fiber
 - Vite
 - Local Storage for persistence
+- GitHub Pages
 
 ## License
 

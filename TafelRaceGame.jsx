@@ -1,17 +1,22 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Html, Sky, OrbitControls } from "@react-three/drei";
+import * as THREE from "three";
+import Car from "./Car.jsx";
+import ObstacleCar from "./ObstacleCar.jsx";
 
 // --- Constants ---
 const CAR_SPEED = 0.05;
 const OBSTACLE_INTERVAL = 3000;
 const INVINCIBILITY_TIME = 2000;
 const COUNTDOWN_START = 3;
-const BLOCK_START_Z = -60;
+const BLOCK_START_Z = -100; // Changed from -60 to -100 (spawn at top of screen)
 const LANES_MIN = 2;
 const LANES_MAX = 10;
 const ROAD_COLOR = "#777";
 const REPEAT_AFTER_QUESTIONS = 5; // Repeat incorrect answers after this many questions
+const CAR_LENGTH = 2.4; // Length of a car for spacing calculations
+const GATE_PROTECTION_DISTANCE = CAR_LENGTH * 3; // 3 car lengths protection
 
 // --- Styles ---
 const HUD_STYLE = {
@@ -29,18 +34,20 @@ const HUD_STYLE = {
 
 const SOM_STYLE = {
   position: "absolute",
-  bottom: 40,
+  top: 50, // Moved up from 80 to position above road start
   left: "50%",
   transform: "translateX(-50%)",
   background: "#fff",
   color: "#000",
-  fontSize: 40,
+  fontSize: "clamp(24px, 5vw, 48px)", // Responsive font size
   border: "4px solid #ff4141",
   borderRadius: 12,
-  padding: "16px 40px",
+  padding: "12px 30px", // Slightly reduced padding for mobile
   fontWeight: 700,
   zIndex: 10,
   boxShadow: "0 2px 16px #0002",
+  maxWidth: "90vw", // Prevent overflow on small screens
+  textAlign: "center",
 };
 
 const ANSWER_LABEL_STYLE = {
@@ -198,7 +205,13 @@ function TafelRaceGame() {
   // --- State ---
   const [phase, setPhase] = useState("init");
   const [currentPlayer, setCurrentPlayer] = useState('Floris');
-  const [lanes, setLanes] = useState(6); // Changed from 4 to 6
+  
+  // Detect mobile device (portrait orientation) and set default lanes accordingly
+  const [lanes, setLanes] = useState(() => {
+    const isMobile = window.innerWidth < window.innerHeight;
+    return isMobile ? 4 : 6;
+  });
+  
   const [carSpeed, setCarSpeed] = useState(150); // Changed from 50 to 150
   const [gateInterval, setGateInterval] = useState(0); // Changed from 4 to 0
   const [score, setScore] = useState(0);
@@ -389,74 +402,105 @@ function TafelRaceGame() {
       )}
       
       {/* HUD */}
-      <div style={HUD_STYLE}>
+      <div style={{
+        ...HUD_STYLE,
+        fontSize: "clamp(14px, 3vw, 22px)", // Responsive font size
+        padding: "8px 16px", // Slightly reduced padding for mobile
+      }}>
         Speler: {currentPlayer} &nbsp;|&nbsp; Score: {score} &nbsp;|&nbsp; Lives: {lives}
         <br />
         High Score: {highScore}
       </div>
       
-      {/* Show current question only when there are active gates */}
+      {/* Show current question at top of screen above the road */}
       {phase === "play" && currentQuestion && answerBlocks.length > 0 && (
-        <div style={SOM_STYLE}>{currentQuestion}</div>
+        <div style={SOM_STYLE}>
+          {currentQuestion}
+        </div>
       )}
 
       {/* Lane Control Buttons for Tablet/Touch Support */}
-      {phase === "play" && (
-        <div style={{
-          position: "absolute",
-          bottom: 20,
-          left: "50%",
-          transform: "translateX(-50%)",
-          display: "flex",
-          gap: "8px",
-          zIndex: 15,
-          padding: "10px",
-          background: "rgba(0, 0, 0, 0.3)",
-          borderRadius: 15,
-          backdropFilter: "blur(5px)",
-        }}>
-          {Array.from({ length: lanes }).map((_, index) => (
-            <button
-              key={index}
-              onClick={() => handleLaneClick(index)}
-              onTouchStart={(e) => {
-                e.preventDefault();
-                handleLaneClick(index);
-              }}
-              style={{
-                width: "60px",
-                height: "60px",
-                borderRadius: "12px",
-                border: carLane === index ? "4px solid #ff4141" : "2px solid #fff",
-                background: carLane === index ? "#ff4141" : "rgba(255, 255, 255, 0.8)",
-                color: carLane === index ? "#fff" : "#000",
-                fontSize: "24px",
-                fontWeight: "900",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "all 0.2s ease",
-                userSelect: "none",
-                touchAction: "manipulation",
-                boxShadow: carLane === index 
-                  ? "0 4px 12px rgba(255, 65, 65, 0.4)" 
-                  : "0 2px 8px rgba(0, 0, 0, 0.2)",
-                transform: carLane === index ? "scale(1.1)" : "scale(1)",
-              }}
-            >
-              {index + 1}
-            </button>
-          ))}
-        </div>
+      {phase === "play" && answerBlocks.length > 0 && (
+        <>
+          {/* Show current question above the buttons */}
+          <div style={{
+            position: "absolute",
+            bottom: "clamp(100px, 16vh, 140px)", // Position above the buttons
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(0, 0, 0, 0.8)",
+            color: "#fff",
+            fontSize: "clamp(18px, 4vw, 32px)", // Responsive font size
+            fontWeight: "700",
+            padding: "8px 16px",
+            borderRadius: 8,
+            zIndex: 15,
+            textAlign: "center",
+            border: "2px solid #ff4141",
+          }}>
+            {currentQuestion}
+          </div>
+          
+          {/* Lane buttons with answer values */}
+          <div style={{
+            position: "absolute",
+            bottom: "clamp(20px, 4vh, 40px)", // Responsive bottom spacing
+            left: "50%",
+            transform: "translateX(-50%)",
+            display: "flex",
+            gap: "clamp(4px, 1vw, 8px)", // Responsive gap
+            zIndex: 15,
+            padding: "8px",
+            background: "rgba(0, 0, 0, 0.3)",
+            borderRadius: 12,
+            backdropFilter: "blur(5px)",
+            maxWidth: "95vw", // Prevent overflow
+            overflowX: "auto", // Allow horizontal scrolling if needed
+          }}>
+            {answerBlocks.map((block, index) => (
+              <button
+                key={block.id}
+                onClick={() => handleLaneClick(block.lane)}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  handleLaneClick(block.lane);
+                }}
+                style={{
+                  width: "clamp(50px, 10vw, 70px)", // Slightly wider for answer values
+                  height: "clamp(50px, 10vw, 70px)", // Slightly taller for answer values
+                  borderRadius: "10px",
+                  border: carLane === block.lane ? "3px solid #ff4141" : "2px solid #fff",
+                  background: carLane === block.lane ? "#ff4141" : "rgba(255, 255, 255, 0.9)",
+                  color: carLane === block.lane ? "#fff" : "#000",
+                  fontSize: "clamp(14px, 3vw, 20px)", // Responsive font for answer values
+                  fontWeight: "900",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "all 0.2s ease",
+                  userSelect: "none",
+                  touchAction: "manipulation",
+                  boxShadow: carLane === block.lane 
+                    ? "0 3px 10px rgba(255, 65, 65, 0.4)" 
+                    : "0 2px 6px rgba(0, 0, 0, 0.2)",
+                  transform: carLane === block.lane ? "scale(1.05)" : "scale(1)",
+                  flexShrink: 0, // Prevent shrinking in flexbox
+                }}
+              >
+                {block.value}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Speed Boost Button for Touch Devices */}
       {phase === "play" && (
         <div style={{
           position: "absolute",
-          bottom: 100,
-          right: 20,
+          bottom: "clamp(80px, 12vh, 120px)", // Responsive positioning
+          right: "clamp(15px, 3vw, 25px)",
           zIndex: 15,
         }}>
           <button
@@ -472,15 +516,15 @@ function TafelRaceGame() {
             onMouseUp={() => setSpeedBoost(false)}
             onMouseLeave={() => setSpeedBoost(false)}
             style={{
-              width: "80px",
-              height: "80px",
+              width: "clamp(60px, 12vw, 80px)", // Responsive size
+              height: "clamp(60px, 12vw, 80px)",
               borderRadius: "50%",
               border: "3px solid #fff",
               background: speedBoost 
                 ? "linear-gradient(135deg, #ff6b6b, #ee5a52)" 
                 : "rgba(255, 255, 255, 0.8)",
               color: speedBoost ? "#fff" : "#000",
-              fontSize: "16px",
+              fontSize: "clamp(12px, 2.5vw, 16px)", // Responsive font
               fontWeight: "700",
               cursor: "pointer",
               display: "flex",
@@ -491,39 +535,17 @@ function TafelRaceGame() {
               userSelect: "none",
               touchAction: "manipulation",
               boxShadow: speedBoost 
-                ? "0 6px 20px rgba(255, 107, 107, 0.4)" 
-                : "0 4px 12px rgba(0, 0, 0, 0.2)",
-              transform: speedBoost ? "scale(1.1)" : "scale(1)",
+                ? "0 4px 15px rgba(255, 107, 107, 0.4)" 
+                : "0 3px 10px rgba(0, 0, 0, 0.2)",
+              transform: speedBoost ? "scale(1.05)" : "scale(1)",
             }}
           >
-            <div style={{ fontSize: "24px", marginBottom: "2px" }}>🚀</div>
-            <div style={{ fontSize: "12px" }}>BOOST</div>
+            <div style={{ fontSize: "clamp(18px, 4vw, 24px)", marginBottom: "2px" }}>🚀</div>
+            <div style={{ fontSize: "clamp(8px, 2vw, 12px)" }}>BOOST</div>
           </button>
         </div>
       )}
 
-      {/* Control Instructions for Touch Devices */}
-      {phase === "play" && (
-        <div style={{
-          position: "absolute",
-          top: 120,
-          left: 20,
-          background: "rgba(0, 0, 0, 0.6)",
-          color: "#fff",
-          fontSize: 14,
-          borderRadius: 8,
-          padding: "8px 12px",
-          zIndex: 10,
-          maxWidth: "200px",
-          lineHeight: 1.3,
-        }}>
-          <div style={{ fontWeight: "600", marginBottom: "4px" }}>🎮 Controls:</div>
-          <div>• Tap lane buttons to move</div>
-          <div>• Hold boost for speed</div>
-          <div>• Keyboard: ←→ + ↑</div>
-        </div>
-      )}
-      
       {/* Countdown overlay */}
       {phase === "countdown" && (
         <div style={{
@@ -622,25 +644,39 @@ function TafelRaceGame() {
           height: "100vh",
           background: "rgba(0,0,0,0.7)",
           color: "#fff",
-          fontSize: 32,
+          fontSize: "clamp(20px, 4vw, 32px)", // Responsive font
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "flex-start",
           zIndex: 40,
-          padding: "20px",
+          padding: "clamp(10px, 3vw, 20px)", // Responsive padding
           overflowY: "auto",
         }}>
-          <div style={{ marginBottom: 40 }}>Tafel Race Game</div>
+          <div style={{ 
+            marginBottom: "clamp(20px, 5vh, 40px)",
+            fontSize: "clamp(24px, 6vw, 40px)",
+          }}>
+            Tafel Race Game
+          </div>
           
           {/* Player Selection */}
-          <div style={{ fontSize: 28, marginBottom: 30, textAlign: "center" }}>
+          <div style={{ 
+            fontSize: "clamp(18px, 4vw, 28px)", 
+            marginBottom: "clamp(15px, 4vh, 30px)", 
+            textAlign: "center" 
+          }}>
             <div style={{ marginBottom: 15 }}>Kies speler:</div>
-            <div style={{ display: "flex", gap: "20px", justifyContent: "center", flexWrap: "wrap" }}>
+            <div style={{ 
+              display: "flex", 
+              gap: "clamp(10px, 3vw, 20px)", 
+              justifyContent: "center", 
+              flexWrap: "wrap" 
+            }}>
               <button
                 style={{
-                  fontSize: 24,
-                  padding: "12px 30px",
+                  fontSize: "clamp(16px, 3.5vw, 24px)",
+                  padding: "clamp(8px, 2vw, 12px) clamp(15px, 4vw, 30px)",
                   borderRadius: 10,
                   border: "3px solid #ff4141",
                   background: currentPlayer === 'Floris' ? "#ff4141" : "transparent",
@@ -648,6 +684,7 @@ function TafelRaceGame() {
                   fontWeight: 700,
                   cursor: "pointer",
                   transition: "all 0.2s ease",
+                  touchAction: "manipulation",
                 }}
                 onClick={() => handlePlayerChange('Floris')}
               >
@@ -655,8 +692,8 @@ function TafelRaceGame() {
               </button>
               <button
                 style={{
-                  fontSize: 24,
-                  padding: "12px 30px",
+                  fontSize: "clamp(16px, 3.5vw, 24px)",
+                  padding: "clamp(8px, 2vw, 12px) clamp(15px, 4vw, 30px)",
                   borderRadius: 10,
                   border: "3px solid #ff4141",
                   background: currentPlayer === 'Esmee' ? "#ff4141" : "transparent",
@@ -664,6 +701,7 @@ function TafelRaceGame() {
                   fontWeight: 700,
                   cursor: "pointer",
                   transition: "all 0.2s ease",
+                  touchAction: "manipulation",
                 }}
                 onClick={() => handlePlayerChange('Esmee')}
               >
@@ -671,8 +709,8 @@ function TafelRaceGame() {
               </button>
               <button
                 style={{
-                  fontSize: 24,
-                  padding: "12px 30px",
+                  fontSize: "clamp(16px, 3.5vw, 24px)",
+                  padding: "clamp(8px, 2vw, 12px) clamp(15px, 4vw, 30px)",
                   borderRadius: 10,
                   border: "3px solid #ff4141",
                   background: currentPlayer === 'Tim' ? "#ff4141" : "transparent",
@@ -680,6 +718,7 @@ function TafelRaceGame() {
                   fontWeight: 700,
                   cursor: "pointer",
                   transition: "all 0.2s ease",
+                  touchAction: "manipulation",
                 }}
                 onClick={() => handlePlayerChange('Tim')}
               >
@@ -688,7 +727,11 @@ function TafelRaceGame() {
             </div>
           </div>
           
-          <div style={{ fontSize: 22, marginBottom: 20 }}>
+          <div style={{ 
+            fontSize: "clamp(14px, 3vw, 22px)", 
+            marginBottom: "clamp(10px, 2vh, 20px)",
+            textAlign: "center",
+          }}>
             Aantal rijstroken: {lanes}
             <input
               type="range"
@@ -696,11 +739,18 @@ function TafelRaceGame() {
               max={LANES_MAX}
               value={lanes}
               onChange={e => setLanes(+e.target.value)}
-              style={{ marginLeft: 12, width: 150 }}
+              style={{ 
+                marginLeft: 12, 
+                width: "clamp(100px, 25vw, 150px)" // Responsive slider width
+              }}
             />
           </div>
           
-          <div style={{ fontSize: 22, marginBottom: 20 }}>
+          <div style={{ 
+            fontSize: "clamp(14px, 3vw, 22px)", 
+            marginBottom: "clamp(10px, 2vh, 20px)",
+            textAlign: "center",
+          }}>
             Snelheid: {carSpeed}
             <input
               type="range"
@@ -708,11 +758,18 @@ function TafelRaceGame() {
               max={200}
               value={carSpeed}
               onChange={e => setCarSpeed(+e.target.value)}
-              style={{ marginLeft: 12, width: 150 }}
+              style={{ 
+                marginLeft: 12, 
+                width: "clamp(100px, 25vw, 150px)"
+              }}
             />
           </div>
           
-          <div style={{ fontSize: 22, marginBottom: 30 }}>
+          <div style={{ 
+            fontSize: "clamp(14px, 3vw, 22px)", 
+            marginBottom: "clamp(15px, 3vh, 30px)",
+            textAlign: "center",
+          }}>
             Poorten interval: {gateInterval}s
             <input
               type="range"
@@ -720,21 +777,25 @@ function TafelRaceGame() {
               max={8}
               value={gateInterval}
               onChange={e => setGateInterval(+e.target.value)}
-              style={{ marginLeft: 12, width: 150 }}
+              style={{ 
+                marginLeft: 12, 
+                width: "clamp(100px, 25vw, 150px)"
+              }}
             />
           </div>
           
           <button
             style={{
-              fontSize: 28,
-              padding: "12px 40px",
+              fontSize: "clamp(18px, 4vw, 28px)",
+              padding: "clamp(8px, 2vh, 12px) clamp(20px, 5vw, 40px)",
               borderRadius: 10,
               border: "none",
               background: "#ff4141",
               color: "#fff",
               fontWeight: 700,
               cursor: "pointer",
-              marginBottom: 20,
+              marginBottom: "clamp(10px, 2vh, 20px)",
+              touchAction: "manipulation",
             }}
             onClick={startGame}
           >
@@ -743,15 +804,16 @@ function TafelRaceGame() {
 
           <button
             style={{
-              fontSize: 24,
-              padding: "10px 30px",
+              fontSize: "clamp(16px, 3.5vw, 24px)",
+              padding: "clamp(6px, 1.5vh, 10px) clamp(15px, 4vw, 30px)",
               borderRadius: 10,
               border: "2px solid #4CAF50",
               background: "transparent",
               color: "#4CAF50",
               fontWeight: 700,
               cursor: "pointer",
-              marginBottom: 40,
+              marginBottom: "clamp(20px, 4vh, 40px)",
+              touchAction: "manipulation",
             }}
             onClick={goToStatistics}
           >
@@ -760,8 +822,8 @@ function TafelRaceGame() {
 
           {/* High Score Display */}
           <div style={{ 
-            fontSize: 24, 
-            marginBottom: 30,
+            fontSize: "clamp(16px, 3.5vw, 24px)", 
+            marginBottom: "clamp(15px, 3vh, 30px)",
             color: "#ffd700",
             textAlign: "center"
           }}>
@@ -773,12 +835,12 @@ function TafelRaceGame() {
             <div style={{
               background: "rgba(255,255,255,0.1)",
               borderRadius: 10,
-              padding: 20,
-              maxWidth: "600px",
+              padding: "clamp(10px, 3vw, 20px)",
+              maxWidth: "clamp(300px, 80vw, 600px)", // Responsive width
               width: "100%",
             }}>
               <h3 style={{ 
-                fontSize: 20, 
+                fontSize: "clamp(14px, 3vw, 20px)", 
                 marginBottom: 15, 
                 color: "#ff6b6b",
                 textAlign: "center" 
@@ -787,15 +849,15 @@ function TafelRaceGame() {
               </h3>
               
               <div style={{ 
-                maxHeight: "300px", 
+                maxHeight: "clamp(200px, 30vh, 300px)", // Responsive height
                 overflowY: "auto",
-                fontSize: 16,
+                fontSize: "clamp(12px, 2.5vw, 16px)",
               }}>
                 {incorrectAnswers.map((answer, index) => (
                   <div key={answer.id} style={{
                     background: "rgba(255,255,255,0.05)",
                     margin: "5px 0",
-                    padding: "10px",
+                    padding: "8px",
                     borderRadius: 5,
                     borderLeft: "3px solid #ff6b6b",
                   }}>
@@ -803,7 +865,7 @@ function TafelRaceGame() {
                       {answer.question} = {answer.correctAnswer}
                     </div>
                     <div style={{ 
-                      fontSize: 14, 
+                      fontSize: "clamp(10px, 2vw, 14px)", 
                       color: "#ffcccc",
                       marginTop: 2 
                     }}>
@@ -820,16 +882,16 @@ function TafelRaceGame() {
             <div style={{
               background: "rgba(255,165,0,0.2)",
               borderRadius: 10,
-              padding: 15,
-              marginTop: 20,
-              maxWidth: "600px",
+              padding: "clamp(8px, 2vw, 15px)",
+              marginTop: "clamp(10px, 2vh, 20px)",
+              maxWidth: "clamp(300px, 80vw, 600px)",
               width: "100%",
               textAlign: "center",
             }}>
-              <div style={{ fontSize: 16, color: "#ffa500" }}>
+              <div style={{ fontSize: "clamp(12px, 2.5vw, 16px)", color: "#ffa500" }}>
                 📝 {pendingRepeats.length} vraag{pendingRepeats.length !== 1 ? 'en' : ''} worden herhaald voor {currentPlayer}
               </div>
-              <div style={{ fontSize: 14, color: "#ffcc99", marginTop: 5 }}>
+              <div style={{ fontSize: "clamp(10px, 2vw, 14px)", color: "#ffcc99", marginTop: 5 }}>
                 Foutieve antwoorden komen terug na elke {REPEAT_AFTER_QUESTIONS} vragen
               </div>
             </div>
@@ -838,7 +900,7 @@ function TafelRaceGame() {
       )}
       
       {/* 3D Canvas */}
-      <Canvas camera={{ position: [0, 7, 12], fov: 60 }} style={{ width: "100vw", height: "100vh" }}>
+      <Canvas camera={{ position: [0, 4.2, 12], fov: 60 }} style={{ width: "100vw", height: "100vh" }}>
         <Sky sunPosition={[100, 20, 100]} turbidity={8} distance={450} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[0, 20, 10]} intensity={0.7} />
@@ -899,7 +961,6 @@ function TafelRaceGame() {
           setLastGateTime={setLastGateTime}
           bufferActive={bufferActive}
           setBufferActive={setBufferActive}
-          bufferTime={bufferTime}
           speedBoost={speedBoost}
           questionsAnswered={questionsAnswered}
           setQuestionsAnswered={setQuestionsAnswered}
@@ -1312,7 +1373,7 @@ function GameLogic({
         
         const newBlocks = opts.map((opt, i) => ({
           lane: i,
-          z: blockStartZ,
+          z: blockStartZ, // Now spawns at -100 (top of screen)
           value: opt,
           id: Math.random().toString(36).slice(2),
           questionId: Date.now().toString(),
@@ -1320,44 +1381,81 @@ function GameLogic({
         
         setAnswerBlocks(newBlocks);
         setLastGateTime(Date.now());
+        console.log(`Spawned new gates at z=${blockStartZ}`);
       }
     }, effectiveInterval);
     
     return () => clearInterval(t);
   }, [phase, lanes, gateIntervalMs, blockStartZ, answerBlocks.length, questionsAnswered, currentPlayer]);
 
-  // Fixed obstacle spawning - simplified and more reliable
+  // Improved obstacle spawning with proper gate avoidance
   useEffect(() => {
     if (phase !== "play") return;
     
     const maxTrafficCars = Math.max(1, Math.floor(lanes / 2));
-    const SPAWN_INTERVAL = 3000; // Increased to 3 seconds for better visibility
+    const SPAWN_INTERVAL = 2500; // Slightly faster spawning
+    const OBSTACLE_SPAWN_Z = -120; // Spawn further back than gates
     
     const t = setInterval(() => {
       setObstacles((obs) => {
         // Count active obstacles (those still visible)
-        const activeCars = obs.filter((o) => o.z > -100).length;
+        const activeCars = obs.filter((o) => o.z > -150).length;
         
         if (activeCars < maxTrafficCars) {
-          const newLane = Math.floor(Math.random() * lanes);
-          const obstacleSpawnZ = -80;
+          // Check if there are any active gates
+          const activeGates = answerBlocks.filter(gate => gate.z > -150);
           
-          // Simple check: don't spawn if there's already a car in this lane nearby
-          const conflictingCar = obs.find((car) => 
-            car.lane === newLane && Math.abs(car.z - obstacleSpawnZ) < 20
-          );
+          // Find available lanes (not blocked by gates or other obstacles)
+          const availableLanes = [];
           
-          if (!conflictingCar) {
-            console.log(`Spawning traffic car in lane ${newLane} at z=${obstacleSpawnZ}`); // Enhanced debug log
+          for (let lane = 0; lane < lanes; lane++) {
+            let laneBlocked = false;
+            
+            // Check if lane is blocked by a gate within protection distance
+            for (const gate of activeGates) {
+              if (gate.lane === lane) {
+                const distanceToGate = Math.abs(gate.z - OBSTACLE_SPAWN_Z);
+                if (distanceToGate < GATE_PROTECTION_DISTANCE) {
+                  laneBlocked = true;
+                  console.log(`Lane ${lane} blocked by gate at z=${gate.z.toFixed(1)}, distance=${distanceToGate.toFixed(1)}`);
+                  break;
+                }
+              }
+            }
+            
+            // Check if lane is blocked by another obstacle nearby
+            if (!laneBlocked) {
+              const nearbyObstacle = obs.find(obstacle => 
+                obstacle.lane === lane && 
+                Math.abs(obstacle.z - OBSTACLE_SPAWN_Z) < CAR_LENGTH * 2
+              );
+              if (nearbyObstacle) {
+                laneBlocked = true;
+                console.log(`Lane ${lane} blocked by nearby obstacle`);
+              }
+            }
+            
+            if (!laneBlocked) {
+              availableLanes.push(lane);
+            }
+          }
+          
+          // Spawn obstacle in a random available lane
+          if (availableLanes.length > 0) {
+            const selectedLane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
+            console.log(`Spawning traffic car in lane ${selectedLane} at z=${OBSTACLE_SPAWN_Z} (${availableLanes.length} lanes available)`);
+            
             return [
               ...obs,
               {
-                lane: newLane,
-                z: obstacleSpawnZ,
+                lane: selectedLane,
+                z: OBSTACLE_SPAWN_Z,
                 id: Math.random().toString(36).slice(2),
-                colorIndex: obs.length % 5, // Alternating color index (0-4)
+                colorIndex: obs.length % 5,
               },
             ];
+          } else {
+            console.log(`No available lanes for traffic spawn (${activeGates.length} active gates)`);
           }
         }
         return obs;
@@ -1365,7 +1463,7 @@ function GameLogic({
     }, SPAWN_INTERVAL);
     
     return () => clearInterval(t);
-  }, [phase, lanes]); // Removed answerBlocks dependency
+  }, [phase, lanes, answerBlocks]); // Include answerBlocks dependency for gate tracking
 
   // Buffer management around gates
   useEffect(() => {
@@ -1402,272 +1500,18 @@ function GameLogic({
 function Road({ lanes }) {
   return (
     <group>
-      {/* Road base - wider to accommodate proper lane spacing */}
-      <mesh position={[0, 0, -60]} receiveShadow>
-        <boxGeometry args={[lanes * 2.5 + 2, 0.3, 130]} />
+      {/* Road base - positioned lower and extended to reach 80% screen height */}
+      <mesh position={[0, -0.4, -90]} receiveShadow>
+        <boxGeometry args={[lanes * 2.5 + 2, 0.3, 220]} />
         <meshStandardMaterial color={ROAD_COLOR} />
       </mesh>
-      {/* Lane separator lines - adjusted for new spacing */}
+      {/* Lane separator lines - adjusted for new positioning */}
       {Array.from({ length: lanes - 1 }).map((_, i) => (
-        <mesh key={i} position={[(i - (lanes - 2) / 2) * 2.5, 0.151, -60]}>
-          <boxGeometry args={[0.05, 0.01, 130]} />
+        <mesh key={i} position={[(i - (lanes - 2) / 2) * 2.5, -0.249, -90]}>
+          <boxGeometry args={[0.05, 0.01, 220]} />
           <meshStandardMaterial color="#fff" />
         </mesh>
       ))}
-    </group>
-  );
-}
-
-// --- Car Component ---
-function Car({ lane, laneX, lanes, invincible }) {
-  const ref = useRef();
-  const [wiggle, setWiggle] = useState(0);
-  
-  useFrame((_, delta) => {
-    if (invincible) {
-      setWiggle((w) => w + delta * 16);
-      if (ref.current) {
-        ref.current.material.opacity = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 80));
-        ref.current.rotation.z = 0.15 * Math.sin(wiggle);
-      }
-    } else {
-      setWiggle(0);
-      if (ref.current) {
-        ref.current.material.opacity = 1;
-        ref.current.rotation.z = 0;
-      }
-    }
-  });
-
-  return (
-    <group position={[laneX(lane), 0, 0]}>
-      {/* Main car body - lower and wider */}
-      <mesh ref={ref} position={[0, 0.35, 0]} castShadow>
-        <boxGeometry args={[1.6, 0.5, 2.4]} />
-        <meshStandardMaterial color="#e74c3c" transparent metalness={0.3} roughness={0.4} />
-      </mesh>
-      
-      {/* Car roof/cabin - more realistic proportions */}
-      <mesh position={[0, 0.75, -0.1]} castShadow>
-        <boxGeometry args={[1.3, 0.4, 1.6]} />
-        <meshStandardMaterial color="#c0392b" metalness={0.2} roughness={0.5} />
-      </mesh>
-      
-      {/* Hood */}
-      <mesh position={[0, 0.38, 0.8]} castShadow>
-        <boxGeometry args={[1.5, 0.08, 0.8]} />
-        <meshStandardMaterial color="#e74c3c" metalness={0.3} roughness={0.4} />
-      </mesh>
-      
-      {/* Trunk */}
-      <mesh position={[0, 0.38, -1.0]} castShadow>
-        <boxGeometry args={[1.5, 0.08, 0.6]} />
-        <meshStandardMaterial color="#e74c3c" metalness={0.3} roughness={0.4} />
-      </mesh>
-      
-      {/* Front bumper */}
-      <mesh position={[0, 0.2, 1.3]} castShadow>
-        <boxGeometry args={[1.4, 0.25, 0.15]} />
-        <meshStandardMaterial color="#2c3e50" metalness={0.1} roughness={0.8} />
-      </mesh>
-      
-      {/* Rear bumper */}
-      <mesh position={[0, 0.2, -1.3]} castShadow>
-        <boxGeometry args={[1.4, 0.25, 0.15]} />
-        <meshStandardMaterial color="#2c3e50" metalness={0.1} roughness={0.8} />
-      </mesh>
-      
-      {/* Front headlights - larger and more detailed */}
-      <mesh position={[0.6, 0.32, 1.25]} castShadow>
-        <cylinderGeometry args={[0.18, 0.15, 0.12, 8]} rotation={[Math.PI / 2, 0, 0]} />
-        <meshStandardMaterial color="#f8f9fa" emissive="#ffffff" emissiveIntensity={0.3} metalness={0.9} roughness={0.1} />
-      </mesh>
-      <mesh position={[-0.6, 0.32, 1.25]} castShadow>
-        <cylinderGeometry args={[0.18, 0.15, 0.12, 8]} rotation={[Math.PI / 2, 0, 0]} />
-        <meshStandardMaterial color="#f8f9fa" emissive="#ffffff" emissiveIntensity={0.3} metalness={0.9} roughness={0.1} />
-      </mesh>
-      
-      {/* Headlight inner reflectors */}
-      <mesh position={[0.6, 0.32, 1.2]} castShadow>
-        <cylinderGeometry args={[0.1, 0.1, 0.05, 6]} rotation={[Math.PI / 2, 0, 0]} />
-        <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
-      </mesh>
-      <mesh position={[-0.6, 0.32, 1.2]} castShadow>
-        <cylinderGeometry args={[0.1, 0.1, 0.05, 6]} rotation={[Math.PI / 2, 0, 0]} />
-        <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
-      </mesh>
-      
-      {/* Rear lights - more detailed */}
-      <mesh position={[0.55, 0.32, -1.25]} castShadow>
-        <boxGeometry args={[0.25, 0.15, 0.08]} />
-        <meshStandardMaterial color="#dc3545" emissive="#ff0000" emissiveIntensity={0.2} metalness={0.8} roughness={0.2} />
-      </mesh>
-      <mesh position={[-0.55, 0.32, -1.25]} castShadow>
-        <boxGeometry args={[0.25, 0.15, 0.08]} />
-        <meshStandardMaterial color="#dc3545" emissive="#ff0000" emissiveIntensity={0.2} metalness={0.8} roughness={0.2} />
-      </mesh>
-      
-      {/* Turn signals */}
-      <mesh position={[0.7, 0.32, 1.15]} castShadow>
-        <boxGeometry args={[0.15, 0.1, 0.06]} />
-        <meshStandardMaterial color="#ffa500" emissive="#ff8c00" emissiveIntensity={0.1} />
-      </mesh>
-      <mesh position={[-0.7, 0.32, 1.15]} castShadow>
-        <boxGeometry args={[0.15, 0.1, 0.06]} />
-        <meshStandardMaterial color="#ffa500" emissive="#ff8c00" emissiveIntensity={0.1} />
-      </mesh>
-      
-      {/* Windshield - angled */}
-      <mesh position={[0, 0.78, 0.5]} rotation={[-0.1, 0, 0]} castShadow>
-        <boxGeometry args={[1.25, 0.35, 0.04]} />
-        <meshStandardMaterial color="#87ceeb" transparent opacity={0.8} metalness={0.9} roughness={0.1} />
-      </mesh>
-      
-      {/* Rear window - angled */}
-      <mesh position={[0, 0.78, -0.7]} rotation={[0.15, 0, 0]} castShadow>
-        <boxGeometry args={[1.25, 0.3, 0.04]} />
-        <meshStandardMaterial color="#87ceeb" transparent opacity={0.8} metalness={0.9} roughness={0.1} />
-      </mesh>
-      
-      {/* Side windows */}
-      <mesh position={[0.68, 0.73, 0]} rotation={[0, 0, 0.1]} castShadow>
-        <boxGeometry args={[0.04, 0.25, 1.2]} />
-        <meshStandardMaterial color="#87ceeb" transparent opacity={0.8} />
-      </mesh>
-      <mesh position={[-0.68, 0.73, 0]} rotation={[0, 0, -0.1]} castShadow>
-        <boxGeometry args={[0.04, 0.25, 1.2]} />
-        <meshStandardMaterial color="#87ceeb" transparent opacity={0.8} />
-      </mesh>
-      
-      {/* Side mirrors - more detailed */}
-      <mesh position={[0.82, 0.65, 0.3]} castShadow>
-        <boxGeometry args={[0.06, 0.04, 0.08]} />
-        <meshStandardMaterial color="#2c3e50" />
-      </mesh>
-      <mesh position={[-0.82, 0.65, 0.3]} castShadow>
-        <boxGeometry args={[0.06, 0.04, 0.08]} />
-        <meshStandardMaterial color="#2c3e50" />
-      </mesh>
-      
-      {/* Mirror glass */}
-      <mesh position={[0.85, 0.65, 0.3]} castShadow>
-        <boxGeometry args={[0.02, 0.03, 0.05]} />
-        <meshStandardMaterial color="#87ceeb" metalness={0.9} roughness={0.1} />
-      </mesh>
-      <mesh position={[-0.85, 0.65, 0.3]} castShadow>
-        <boxGeometry args={[0.02, 0.03, 0.05]} />
-        <meshStandardMaterial color="#87ceeb" metalness={0.9} roughness={0.1} />
-      </mesh>
-      
-      {/* Door handles */}
-      <mesh position={[0.78, 0.45, 0.2]} castShadow>
-        <boxGeometry args={[0.03, 0.02, 0.08]} />
-        <meshStandardMaterial color="#2c3e50" metalness={0.8} roughness={0.2} />
-      </mesh>
-      <mesh position={[-0.78, 0.45, 0.2]} castShadow>
-        <boxGeometry args={[0.03, 0.02, 0.08]} />
-        <meshStandardMaterial color="#2c3e50" metalness={0.8} roughness={0.2} />
-      </mesh>
-      
-      {/* Wheels - front, more detailed with better proportions */}
-      <mesh position={[0.7, 0.12, 0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.28, 0.28, 0.18, 16]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
-      </mesh>
-      <mesh position={[-0.7, 0.12, 0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.28, 0.28, 0.18, 16]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
-      </mesh>
-      
-      {/* Wheels - rear */}
-      <mesh position={[0.7, 0.12, -0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.28, 0.28, 0.18, 16]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
-      </mesh>
-      <mesh position={[-0.7, 0.12, -0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.28, 0.28, 0.18, 16]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
-      </mesh>
-      
-      {/* Alloy wheel rims - front */}
-      <mesh position={[0.7, 0.12, 0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.18, 0.18, 0.19, 8]} />
-        <meshStandardMaterial color="#c0c0c0" metalness={0.8} roughness={0.2} />
-      </mesh>
-      <mesh position={[-0.7, 0.12, 0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.18, 0.18, 0.19, 8]} />
-        <meshStandardMaterial color="#c0c0c0" metalness={0.8} roughness={0.2} />
-      </mesh>
-      
-      {/* Alloy wheel rims - rear */}
-      <mesh position={[0.7, 0.12, -0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.18, 0.18, 0.19, 8]} />
-        <meshStandardMaterial color="#c0c0c0" metalness={0.8} roughness={0.2} />
-      </mesh>
-      <mesh position={[-0.7, 0.12, -0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.18, 0.18, 0.19, 8]} />
-        <meshStandardMaterial color="#c0c0c0" metalness={0.8} roughness={0.2} />
-      </mesh>
-      
-      {/* Brake discs */}
-      <mesh position={[0.7, 0.12, 0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.12, 0.12, 0.02, 16]} />
-        <meshStandardMaterial color="#444444" metalness={0.9} roughness={0.3} />
-      </mesh>
-      <mesh position={[-0.7, 0.12, 0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.12, 0.12, 0.02, 16]} />
-        <meshStandardMaterial color="#444444" metalness={0.9} roughness={0.3} />
-      </mesh>
-      <mesh position={[0.7, 0.12, -0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.12, 0.12, 0.02, 16]} />
-        <meshStandardMaterial color="#444444" metalness={0.9} roughness={0.3} />
-      </mesh>
-      <mesh position={[-0.7, 0.12, -0.9]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <cylinderGeometry args={[0.12, 0.12, 0.02, 16]} />
-        <meshStandardMaterial color="#444444" metalness={0.9} roughness={0.3} />
-      </mesh>
-      
-      {/* Front grille - more detailed */}
-      <mesh position={[0, 0.38, 1.28]} castShadow>
-        <boxGeometry args={[0.9, 0.25, 0.04]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.3} roughness={0.7} />
-      </mesh>
-      
-      {/* Grille horizontal slats */}
-      <mesh position={[0, 0.42, 1.29]} castShadow>
-        <boxGeometry args={[0.8, 0.02, 0.02]} />
-        <meshStandardMaterial color="#333333" />
-      </mesh>
-      <mesh position={[0, 0.38, 1.29]} castShadow>
-        <boxGeometry args={[0.8, 0.02, 0.02]} />
-        <meshStandardMaterial color="#333333" />
-      </mesh>
-      <mesh position={[0, 0.34, 1.29]} castShadow>
-        <boxGeometry args={[0.8, 0.02, 0.02]} />
-        <meshStandardMaterial color="#333333" />
-      </mesh>
-      
-      {/* License plate holder */}
-      <mesh position={[0, 0.25, 1.32]} castShadow>
-        <boxGeometry args={[0.3, 0.08, 0.02]} />
-        <meshStandardMaterial color="#ffffff" />
-      </mesh>
-      
-      {/* Exhaust pipe */}
-      <mesh position={[0.4, 0.08, -1.35]} rotation={[0, Math.PI / 2, 0]} castShadow>
-        <cylinderGeometry args={[0.04, 0.04, 0.1, 8]} />
-        <meshStandardMaterial color="#666666" metalness={0.8} roughness={0.3} />
-      </mesh>
-      
-      {/* Side skirts */}
-      <mesh position={[0.82, 0.15, 0]} castShadow>
-        <boxGeometry args={[0.04, 0.1, 2.0]} />
-        <meshStandardMaterial color="#c0392b" metalness={0.2} roughness={0.5} />
-      </mesh>
-      <mesh position={[-0.82, 0.15, 0]} castShadow>
-        <boxGeometry args={[0.04, 0.1, 2.0]} />
-        <meshStandardMaterial color="#c0392b" metalness={0.2} roughness={0.5} />
-      </mesh>
     </group>
   );
 }
@@ -1678,9 +1522,9 @@ function AnswerBlock({ lane, laneX, z, value, carLane }) {
   const hideLabel = z > -2 && z < 2 && lane === carLane;
   
   return (
-    <group position={[laneX(lane), 0.5, z]}>
+    <group position={[laneX(lane), 0.1, z]}>
       <mesh>
-        <boxGeometry args={[1.08, 0.63, 1.08]} /> {/* 10% smaller: 1.2->1.08, 0.7->0.63 */}
+        <boxGeometry args={[1.08, 0.63, 1.08]} />
         <meshStandardMaterial color="#fff" />
       </mesh>
       {!hideLabel && (
@@ -1688,154 +1532,6 @@ function AnswerBlock({ lane, laneX, z, value, carLane }) {
           {value}
         </Html>
       )}
-    </group>
-  );
-}
-
-// --- Obstacle Car Component ---
-function ObstacleCar({ lane, laneX, z, colorIndex = 0 }) {
-  // Simplified alternating color palette - 5 distinct colors
-  const colors = [
-    "#2c3e50", // Dark blue-gray
-    "#e74c3c", // Red
-    "#3498db", // Blue
-    "#27ae60", // Green
-    "#f39c12", // Orange
-  ];
-  
-  // Use the provided colorIndex to ensure consistent color
-  const carColor = colors[colorIndex % colors.length];
-  const roofColor = carColor === "#f39c12" ? "#e67e22" : carColor; // Slightly darker orange roof
-
-  return (
-    <group position={[laneX(lane), 0, z]}>
-      {/* Main car body */}
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <boxGeometry args={[1.4, 0.6, 2.2]} />
-        <meshStandardMaterial color={carColor} metalness={0.2} roughness={0.6} />
-      </mesh>
-      
-      {/* Car roof/cabin */}
-      <mesh position={[0, 0.9, -0.2]} castShadow>
-        <boxGeometry args={[1.2, 0.5, 1.4]} />
-        <meshStandardMaterial color={roofColor} metalness={0.1} roughness={0.7} />
-      </mesh>
-      
-      {/* Front bumper */}
-      <mesh position={[0, 0.25, 1.2]} castShadow>
-        <boxGeometry args={[1.3, 0.3, 0.2]} />
-        <meshStandardMaterial color="#2c3e50" />
-      </mesh>
-      
-      {/* Rear bumper */}
-      <mesh position={[0, 0.25, -1.2]} castShadow>
-        <boxGeometry args={[1.3, 0.3, 0.2]} />
-        <meshStandardMaterial color="#2c3e50" />
-      </mesh>
-      
-      {/* Front headlights */}
-      <mesh position={[0.5, 0.35, 1.15]} castShadow>
-        <boxGeometry args={[0.25, 0.15, 0.1]} />
-        <meshStandardMaterial color="#f8f9fa" emissive="#ffffff" emissiveIntensity={0.1} />
-      </mesh>
-      <mesh position={[-0.5, 0.35, 1.15]} castShadow>
-        <boxGeometry args={[0.25, 0.15, 0.1]} />
-        <meshStandardMaterial color="#f8f9fa" emissive="#ffffff" emissiveIntensity={0.1} />
-      </mesh>
-      
-      {/* Rear lights */}
-      <mesh position={[0.5, 0.35, -1.15]} castShadow>
-        <boxGeometry args={[0.2, 0.12, 0.1]} />
-        <meshStandardMaterial color="#dc3545" emissive="#ff0000" emissiveIntensity={0.05} />
-      </mesh>
-      <mesh position={[-0.5, 0.35, -1.15]} castShadow>
-        <boxGeometry args={[0.2, 0.12, 0.1]} />
-        <meshStandardMaterial color="#dc3545" emissive="#ff0000" emissiveIntensity={0.05} />
-      </mesh>
-      
-      {/* Windshield */}
-      <mesh position={[0, 0.85, 0.4]} castShadow>
-        <boxGeometry args={[1.1, 0.4, 0.05]} />
-        <meshStandardMaterial color="#17a2b8" transparent opacity={0.6} />
-      </mesh>
-      
-      {/* Rear window */}
-      <mesh position={[0, 0.85, -0.8]} castShadow>
-        <boxGeometry args={[1.1, 0.35, 0.05]} />
-        <meshStandardMaterial color="#17a2b8" transparent opacity={0.6} />
-      </mesh>
-      
-      {/* Side mirrors */}
-      <mesh position={[0.75, 0.75, 0.2]} castShadow>
-        <boxGeometry args={[0.08, 0.06, 0.12]} />
-        <meshStandardMaterial color="#2c3e50" />
-      </mesh>
-      <mesh position={[-0.75, 0.75, 0.2]} castShadow>
-        <boxGeometry args={[0.08, 0.06, 0.12]} />
-        <meshStandardMaterial color="#2c3e50" />
-      </mesh>
-      
-      {/* Wheels - front */}
-      <mesh position={[0.6, 0.15, 0.8]} castShadow>
-        <cylinderGeometry args={[0.25, 0.25, 0.15, 8]} />
-        <meshStandardMaterial color="#1a1a1a" />
-      </mesh>
-      <mesh position={[-0.6, 0.15, 0.8]} castShadow>
-        <cylinderGeometry args={[0.25, 0.25, 0.15, 8]} />
-        <meshStandardMaterial color="#1a1a1a" />
-      </mesh>
-      
-      {/* Wheels - rear */}
-      <mesh position={[0.6, 0.15, -0.8]} castShadow>
-        <cylinderGeometry args={[0.25, 0.25, 0.15, 8]} />
-        <meshStandardMaterial color="#1a1a1a" />
-      </mesh>
-      <mesh position={[-0.6, 0.15, -0.8]} castShadow>
-        <cylinderGeometry args={[0.25, 0.25, 0.15, 8]} />
-        <meshStandardMaterial color="#1a1a1a" />
-      </mesh>
-      
-      {/* Wheel rims - front */}
-      <mesh position={[0.6, 0.15, 0.8]} castShadow>
-        <cylinderGeometry args={[0.15, 0.15, 0.16, 8]} />
-        <meshStandardMaterial color="#6c757d" />
-      </mesh>
-      <mesh position={[-0.6, 0.15, 0.8]} castShadow>
-        <cylinderGeometry args={[0.15, 0.15, 0.16, 8]} />
-        <meshStandardMaterial color="#6c757d" />
-      </mesh>
-      
-      {/* Wheel rims - rear */}
-      <mesh position={[0.6, 0.15, -0.8]} castShadow>
-        <cylinderGeometry args={[0.15, 0.15, 0.16, 8]} />
-        <meshStandardMaterial color="#6c757d" />
-      </mesh>
-      <mesh position={[-0.6, 0.15, -0.8]} castShadow>
-        <cylinderGeometry args={[0.15, 0.15, 0.16, 8]} />
-        <meshStandardMaterial color="#6c757d" />
-      </mesh>
-      
-      {/* License plate */}
-      <mesh position={[0, 0.25, 1.32]} castShadow>
-        <boxGeometry args={[0.3, 0.08, 0.02]} />
-        <meshStandardMaterial color="#ffffff" />
-      </mesh>
-      
-      {/* Exhaust pipe */}
-      <mesh position={[0.4, 0.08, -1.35]} rotation={[0, Math.PI / 2, 0]} castShadow>
-        <cylinderGeometry args={[0.04, 0.04, 0.1, 8]} />
-        <meshStandardMaterial color="#666666" metalness={0.8} roughness={0.3} />
-      </mesh>
-      
-      {/* Side skirts */}
-      <mesh position={[0.82, 0.15, 0]} castShadow>
-        <boxGeometry args={[0.04, 0.1, 2.0]} />
-        <meshStandardMaterial color="#c0392b" metalness={0.2} roughness={0.5} />
-      </mesh>
-      <mesh position={[-0.82, 0.15, 0]} castShadow>
-        <boxGeometry args={[0.04, 0.1, 2.0]} />
-        <meshStandardMaterial color="#c0392b" metalness={0.2} roughness={0.5} />
-      </mesh>
     </group>
   );
 }
