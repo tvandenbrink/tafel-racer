@@ -257,7 +257,8 @@ function TafelRaceGame() {
     if (selectedTables.length === 0) return;
     setScore(0);
     setLives(3);
-    setCarLane(0);
+    const mid = Math.floor(lanes / 2);
+    setCarLane(mid - (Math.random() < 0.5 ? 1 : 0));
     setObstacles([]);
     setAnswerBlocks([]);
     setShowGameOver(false);
@@ -268,11 +269,13 @@ function TafelRaceGame() {
     worldScroll = 0;
     setPhase("countdown");
     setPendingRepeats(getPendingRepeats(currentPlayer));
-  }, [currentPlayer, selectedTables]);
+  }, [currentPlayer, selectedTables, lanes]);
 
   const backToSettings = useCallback(() => {
     setPhase("init");
     setShowGameOver(false);
+    setAnswerBlocks([]);
+    setObstacles([]);
   }, []);
 
   const updateScore = useCallback((newScore) => {
@@ -295,6 +298,8 @@ function TafelRaceGame() {
 
   const goToStatistics = useCallback(() => {
     setPhase("statistics");
+    setAnswerBlocks([]);
+    setObstacles([]);
   }, []);
 
   // --- Countdown effect ---
@@ -1195,7 +1200,10 @@ function GameLogic({
   useFrame(() => {
     if (phase !== "play") return;
     const now = Date.now();
-    hitThisFrame.current = false;
+    // Only reset hit flag when invincibility is confirmed active
+    if (invincible) {
+      hitThisFrame.current = false;
+    }
 
     setAnswerBlocks((blocks) =>
       blocks.map((b) => ({ ...b, z: b.z + actualCarSpeed })).filter((b) => b.z < 2)
