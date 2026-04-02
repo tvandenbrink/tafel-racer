@@ -11,7 +11,7 @@ const CAR_SPEED = 0.05;
 const OBSTACLE_INTERVAL = 3000;
 const INVINCIBILITY_TIME = 2000;
 const COUNTDOWN_START = 3;
-const BLOCK_START_Z = -100;
+const BLOCK_START_Z = -80;
 const LANES_MIN = 2;
 const LANES_MAX = 10;
 const ROAD_COLOR = "#555";
@@ -19,6 +19,7 @@ const REPEAT_AFTER_QUESTIONS = 5;
 const CAR_LENGTH = 2.4;
 const GATE_PROTECTION_DISTANCE = CAR_LENGTH * 3;
 const ALL_TABLES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const DEFAULT_PLAYER = 'Abel';
 
 // --- World scroll & road curve system ---
 // Module-level so all 3D components can read it without prop drilling
@@ -33,20 +34,20 @@ function getRoadOffset(z) {
 }
 
 // --- Local Storage Functions ---
-const getHighScore = (player = 'Floris') => {
+const getHighScore = (player = DEFAULT_PLAYER) => {
   return parseInt(localStorage.getItem(`tafelRaceHighScore_${player}`) || '0');
 };
 
-const setHighScore = (score, player = 'Floris') => {
+const setHighScore = (score, player = DEFAULT_PLAYER) => {
   localStorage.setItem(`tafelRaceHighScore_${player}`, score.toString());
 };
 
-const getIncorrectAnswers = (player = 'Floris') => {
+const getIncorrectAnswers = (player = DEFAULT_PLAYER) => {
   const stored = localStorage.getItem(`tafelRaceIncorrectAnswers_${player}`);
   return stored ? JSON.parse(stored) : [];
 };
 
-const addIncorrectAnswer = (question, correctAnswer, givenAnswer, player = 'Floris') => {
+const addIncorrectAnswer = (question, correctAnswer, givenAnswer, player = DEFAULT_PLAYER) => {
   const incorrectAnswers = getIncorrectAnswers(player);
   const newEntry = { question, correctAnswer, givenAnswer, timestamp: Date.now(), id: Math.random().toString(36).slice(2) };
   incorrectAnswers.unshift(newEntry);
@@ -54,29 +55,29 @@ const addIncorrectAnswer = (question, correctAnswer, givenAnswer, player = 'Flor
   localStorage.setItem(`tafelRaceIncorrectAnswers_${player}`, JSON.stringify(incorrectAnswers));
 };
 
-const getPendingRepeats = (player = 'Floris') => {
+const getPendingRepeats = (player = DEFAULT_PLAYER) => {
   const stored = localStorage.getItem(`tafelRacePendingRepeats_${player}`);
   return stored ? JSON.parse(stored) : [];
 };
 
-const addPendingRepeat = (question, correctAnswer, player = 'Floris') => {
+const addPendingRepeat = (question, correctAnswer, player = DEFAULT_PLAYER) => {
   const pendingRepeats = getPendingRepeats(player);
   pendingRepeats.push({ question, correctAnswer, addedAt: Date.now(), id: Math.random().toString(36).slice(2) });
   localStorage.setItem(`tafelRacePendingRepeats_${player}`, JSON.stringify(pendingRepeats));
 };
 
-const removePendingRepeat = (id, player = 'Floris') => {
+const removePendingRepeat = (id, player = DEFAULT_PLAYER) => {
   const pendingRepeats = getPendingRepeats(player);
   const filtered = pendingRepeats.filter(repeat => repeat.id !== id);
   localStorage.setItem(`tafelRacePendingRepeats_${player}`, JSON.stringify(filtered));
 };
 
-const getStatistics = (player = 'Floris') => {
+const getStatistics = (player = DEFAULT_PLAYER) => {
   const stored = localStorage.getItem(`tafelRaceStatistics_${player}`);
   return stored ? JSON.parse(stored) : {};
 };
 
-const updateStatistics = (question, isCorrect, player = 'Floris') => {
+const updateStatistics = (question, isCorrect, player = DEFAULT_PLAYER) => {
   const stats = getStatistics(player);
   if (!stats[question]) stats[question] = { attempts: 0, mistakes: 0 };
   stats[question].attempts++;
@@ -84,18 +85,18 @@ const updateStatistics = (question, isCorrect, player = 'Floris') => {
   localStorage.setItem(`tafelRaceStatistics_${player}`, JSON.stringify(stats));
 };
 
-const resetStatistics = (player = 'Floris') => {
+const resetStatistics = (player = DEFAULT_PLAYER) => {
   localStorage.removeItem(`tafelRaceStatistics_${player}`);
   localStorage.removeItem(`tafelRaceIncorrectAnswers_${player}`);
   localStorage.removeItem(`tafelRacePendingRepeats_${player}`);
 };
 
-const getSelectedTables = (player = 'Floris') => {
+const getSelectedTables = (player = DEFAULT_PLAYER) => {
   const stored = localStorage.getItem(`tafelRaceSelectedTables_${player}`);
   return stored ? JSON.parse(stored) : [1, 2, 3, 4, 5];
 };
 
-const setSelectedTables = (tables, player = 'Floris') => {
+const setSelectedTables = (tables, player = DEFAULT_PLAYER) => {
   localStorage.setItem(`tafelRaceSelectedTables_${player}`, JSON.stringify(tables));
 };
 
@@ -185,7 +186,7 @@ function StarBurst({ x, y }) {
 // --- Main Game Component ---
 function TafelRaceGame() {
   const [phase, setPhase] = useState("init");
-  const [currentPlayer, setCurrentPlayer] = useState('Floris');
+  const [currentPlayer, setCurrentPlayer] = useState(DEFAULT_PLAYER);
   const [lanes, setLanes] = useState(() => {
     const isMobile = window.innerWidth < window.innerHeight;
     return 4;
@@ -193,7 +194,7 @@ function TafelRaceGame() {
   const [carSpeed, setCarSpeed] = useState(150);
   const [gateInterval, setGateInterval] = useState(0);
   const [score, setScore] = useState(0);
-  const [highScore, setHighScoreState] = useState(getHighScore('Floris'));
+  const [highScore, setHighScoreState] = useState(getHighScore(DEFAULT_PLAYER));
   const [lives, setLives] = useState(3);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [currentCorrect, setCurrentCorrect] = useState(null);
@@ -207,24 +208,24 @@ function TafelRaceGame() {
   const [countdown, setCountdown] = useState(COUNTDOWN_START);
   const [showGameOver, setShowGameOver] = useState(false);
   const [lastGateTime, setLastGateTime] = useState(0);
-  const [bufferActive, setBufferActive] = useState(false);
-  const [speedBoost, setSpeedBoost] = useState(false);
-  const [incorrectAnswers, setIncorrectAnswers] = useState(getIncorrectAnswers('Floris'));
-  const [pendingRepeats, setPendingRepeats] = useState(getPendingRepeats('Floris'));
+  const [incorrectAnswers, setIncorrectAnswers] = useState(getIncorrectAnswers(DEFAULT_PLAYER));
+  const [pendingRepeats, setPendingRepeats] = useState(getPendingRepeats(DEFAULT_PLAYER));
   const [redFlash, setRedFlash] = useState(false);
   const [greenFlash, setGreenFlash] = useState(false);
   const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
   const [correctAnswerDisplay, setCorrectAnswerDisplay] = useState({ question: '', answer: '' });
-  const [selectedTables, setSelectedTablesState] = useState(getSelectedTables('Floris'));
+  const [selectedTables, setSelectedTablesState] = useState(getSelectedTables(DEFAULT_PLAYER));
   const [showConfetti, setShowConfetti] = useState(false);
   const [streak, setStreak] = useState(0);
   const [showStreak, setShowStreak] = useState(false);
   const [newHighScore, setNewHighScore] = useState(false);
+  const [encouragement, setEncouragement] = useState(null);
+  const [showCorrectConfirm, setShowCorrectConfirm] = useState(null);
 
+  const [speedBoost, setSpeedBoost] = useState(false);
   const actualCarSpeed = (carSpeed / 1000) * (speedBoost ? 4 : 1);
   const blockStartZ = BLOCK_START_Z;
   const gateIntervalMs = gateInterval * 1000;
-  const bufferTime = 2000;
 
   const confettiColors = ['#FF6B6B', '#FFE66D', '#4ECDC4', '#45B7D1', '#96E6A1', '#DDA0DD', '#FFA07A', '#87CEEB'];
 
@@ -389,18 +390,44 @@ function TafelRaceGame() {
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           zIndex: 60, pointerEvents: "none",
         }}>
-          <div style={{ fontSize: "clamp(24px, 6vw, 50px)", fontWeight: 700, marginBottom: 10, fontFamily: "'Nunito', sans-serif" }}>
-            Oeps! Het goede antwoord was:
+          <div style={{ fontSize: "clamp(24px, 5vw, 40px)", fontWeight: 700, marginBottom: 6, fontFamily: "'Nunito', sans-serif", animation: 'bounceIn 0.3s ease-out' }}>
+            Bijna! Onthoud dit:
           </div>
-          <div style={{ fontSize: "clamp(32px, 8vw, 60px)", fontWeight: 700, color: "#FFE66D", fontFamily: "'Fredoka One', cursive" }}>
-            {correctAnswerDisplay.question}
+          <div style={{
+            fontSize: "clamp(36px, 9vw, 70px)", fontWeight: 700, color: "#FFE66D",
+            fontFamily: "'Fredoka One', cursive", animation: 'pop 0.4s ease-out 0.1s both',
+            background: 'rgba(255,255,255,0.1)', padding: '10px 30px', borderRadius: 16,
+          }}>
+            {correctAnswerDisplay.question} = {correctAnswerDisplay.answer}
           </div>
-          <div style={{ fontSize: "clamp(48px, 12vw, 90px)", fontWeight: 900, color: "#2ED573", fontFamily: "'Fredoka One', cursive" }}>
-            = {correctAnswerDisplay.answer}
+          <div style={{ fontSize: "clamp(18px, 4vw, 28px)", marginTop: 12, color: "#4ECDC4", animation: 'slideUp 0.3s ease-out 0.3s both' }}>
+            Komt deze straks weer terug! 🔄
           </div>
-          <div style={{ fontSize: "clamp(18px, 4vw, 30px)", marginTop: 15, color: "#ccc" }}>
-            Probeer het nog een keer! 💪
-          </div>
+        </div>
+      )}
+
+      {/* Encouragement message */}
+      {encouragement && (
+        <div style={{
+          position: 'absolute', top: '22%', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 56, pointerEvents: 'none', animation: 'bounceIn 0.4s ease-out',
+          fontFamily: "'Fredoka One', cursive", fontSize: 'clamp(32px, 7vw, 56px)',
+          color: '#2ED573', textShadow: '0 3px 15px rgba(0,0,0,0.5)',
+        }}>
+          {encouragement}
+        </div>
+      )}
+
+      {/* Correct equation confirmation */}
+      {showCorrectConfirm && (
+        <div style={{
+          position: 'absolute', top: '32%', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 55, pointerEvents: 'none', animation: 'slideUp 0.3s ease-out',
+          fontFamily: "'Fredoka One', cursive", fontSize: 'clamp(20px, 4.5vw, 36px)',
+          color: '#fff', textShadow: '0 2px 10px rgba(0,0,0,0.5)',
+          background: 'rgba(46, 213, 115, 0.8)', padding: '6px 20px', borderRadius: 12,
+        }}>
+          ✓ {showCorrectConfirm}
         </div>
       )}
 
@@ -425,12 +452,18 @@ function TafelRaceGame() {
         fontWeight: 700, fontFamily: "'Nunito', sans-serif",
         border: '2px solid rgba(255,255,255,0.15)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ color: '#FFE66D' }}>🏎️ {currentPlayer}</span>
           <span style={{ color: '#aaa' }}>|</span>
           <span>⭐ {score}</span>
           <span style={{ color: '#aaa' }}>|</span>
           <span>{heartsDisplay}</span>
+          {streak >= 2 && (
+            <>
+              <span style={{ color: '#aaa' }}>|</span>
+              <span style={{ color: '#FFA502' }}>🔥{streak}</span>
+            </>
+          )}
         </div>
         {highScore > 0 && (
           <div style={{ fontSize: "clamp(10px, 2vw, 14px)", color: "#ffd700", marginTop: 2 }}>
@@ -516,6 +549,7 @@ function TafelRaceGame() {
           <button
             onTouchStart={(e) => { e.preventDefault(); setSpeedBoost(true); }}
             onTouchEnd={(e) => { e.preventDefault(); setSpeedBoost(false); }}
+            onTouchCancel={() => setSpeedBoost(false)}
             onMouseDown={() => setSpeedBoost(true)}
             onMouseUp={() => setSpeedBoost(false)}
             onMouseLeave={() => setSpeedBoost(false)}
@@ -580,23 +614,34 @@ function TafelRaceGame() {
           <div style={{
             fontSize: "clamp(36px, 8vw, 60px)", fontWeight: 900,
             fontFamily: "'Fredoka One', cursive",
-            color: '#FF6B6B', marginBottom: 10,
+            color: '#FFE66D', marginBottom: 4,
             animation: 'bounceIn 0.5s ease-out',
           }}>
-            Game Over!
+            {score >= 10 ? 'Fantastisch! 🌟' : score >= 5 ? 'Goed gedaan! ⭐' : 'Goed geprobeerd! 💪'}
           </div>
 
-          <div style={{ fontSize: "clamp(20px, 5vw, 36px)", marginBottom: 8, animation: 'slideUp 0.5s ease-out 0.2s both' }}>
+          <div style={{
+            fontSize: "clamp(14px, 3vw, 20px)", color: '#aaa', marginBottom: 12,
+            animation: 'slideUp 0.3s ease-out 0.1s both',
+          }}>
+            {score >= 10
+              ? `Wauw ${currentPlayer}, ${score} sommen goed!`
+              : score >= 5
+                ? `Knap ${currentPlayer}, je wordt steeds beter!`
+                : `Oefening baart kunst, ${currentPlayer}!`}
+          </div>
+
+          <div style={{ fontSize: "clamp(24px, 5.5vw, 40px)", marginBottom: 6, animation: 'slideUp 0.5s ease-out 0.2s both' }}>
             ⭐ Score: <span style={{ color: '#FFE66D', fontWeight: 900 }}>{score}</span>
           </div>
 
-          <div style={{ fontSize: "clamp(16px, 4vw, 24px)", marginBottom: 8, color: "#ffd700", animation: 'slideUp 0.5s ease-out 0.3s both' }}>
+          <div style={{ fontSize: "clamp(16px, 4vw, 24px)", marginBottom: 6, color: "#ffd700", animation: 'slideUp 0.5s ease-out 0.3s both' }}>
             🏆 Record: {highScore}
             {newHighScore && <span style={{ color: '#2ED573', marginLeft: 8, fontWeight: 900 }}>NIEUW RECORD! 🎉</span>}
           </div>
 
           {streak >= 3 && (
-            <div style={{ fontSize: "clamp(14px, 3vw, 20px)", marginBottom: 15, color: "#FFA502", animation: 'slideUp 0.5s ease-out 0.4s both' }}>
+            <div style={{ fontSize: "clamp(14px, 3vw, 20px)", marginBottom: 10, color: "#FFA502", animation: 'slideUp 0.5s ease-out 0.4s both' }}>
               🔥 Beste reeks: {streak} op rij!
             </div>
           )}
@@ -652,11 +697,11 @@ function TafelRaceGame() {
             textAlign: 'center',
           }}>
             <div className="game-title" style={{
-              fontSize: "clamp(26px, 6vw, 44px)",
+              fontSize: "clamp(30px, 8vw, 52px)",
               fontFamily: "'Fredoka One', cursive",
               lineHeight: 1.1,
             }}>
-              🏎️ Tafel Racer 3.0
+              🏎️ Abels Tafel Racer 🏎️
             </div>
             <div style={{ fontSize: "clamp(11px, 2vw, 14px)", color: '#8892b0', marginTop: 2 }}>
               Leer de tafels door te racen!
@@ -901,7 +946,7 @@ function TafelRaceGame() {
         <fog attach="fog" args={['#B0D4F1', 60, 180]} />
 
         <WorldScrollUpdater phase={phase} actualCarSpeed={actualCarSpeed} />
-        <CameraController phase={phase} speedBoost={speedBoost} />
+        <CameraController phase={phase} />
 
         <CurvedRoad lanes={lanes} />
         <ScrollingScenery lanes={lanes} phase={phase} actualCarSpeed={actualCarSpeed} />
@@ -929,13 +974,14 @@ function TafelRaceGame() {
           setCurrentRepeatId={setCurrentRepeatId} updateScore={updateScore} setLives={setLives} lives={lives}
           setPhase={setPhase} setShowGameOver={setShowGameOver} lanes={lanes} actualCarSpeed={actualCarSpeed}
           blockStartZ={blockStartZ} gateIntervalMs={gateIntervalMs} lastGateTime={lastGateTime}
-          setLastGateTime={setLastGateTime} bufferActive={bufferActive} setBufferActive={setBufferActive}
+          setLastGateTime={setLastGateTime}
           speedBoost={speedBoost} questionsAnswered={questionsAnswered} setQuestionsAnswered={setQuestionsAnswered}
           pendingRepeats={pendingRepeats} setPendingRepeats={setPendingRepeats} setIncorrectAnswers={setIncorrectAnswers}
           setRedFlash={setRedFlash} currentPlayer={currentPlayer} setGreenFlash={setGreenFlash}
           setShowCorrectAnswer={setShowCorrectAnswer} setCorrectAnswerDisplay={setCorrectAnswerDisplay}
           selectedTables={selectedTables} setShowConfetti={setShowConfetti}
           streak={streak} setStreak={setStreak} setShowStreak={setShowStreak}
+          setEncouragement={setEncouragement} setShowCorrectConfirm={setShowCorrectConfirm}
         />
 
         <EffectComposer>
@@ -1137,24 +1183,26 @@ function GameLogic({
   invincible, setInvincible, setInvStart, invStart, currentQuestion, setCurrentQuestion,
   currentCorrect, setCurrentCorrect, currentRepeatId, setCurrentRepeatId, updateScore, setLives, lives, setPhase,
   setShowGameOver, lanes, actualCarSpeed, blockStartZ, gateIntervalMs,
-  lastGateTime, setLastGateTime, bufferActive, setBufferActive,
+  lastGateTime, setLastGateTime,
   speedBoost, questionsAnswered, setQuestionsAnswered, pendingRepeats, setPendingRepeats,
   setIncorrectAnswers, setRedFlash, currentPlayer, setGreenFlash, setShowCorrectAnswer, setCorrectAnswerDisplay,
-  selectedTables, setShowConfetti, streak, setStreak, setShowStreak
+  selectedTables, setShowConfetti, streak, setStreak, setShowStreak,
+  setEncouragement, setShowCorrectConfirm
 }) {
   const lastObstacleSpawnTimeRef = useRef(0);
-  const bufferTime = 2000;
+  const hitThisFrame = useRef(false);
 
   useFrame(() => {
     if (phase !== "play") return;
     const now = Date.now();
+    hitThisFrame.current = false;
 
     setAnswerBlocks((blocks) =>
       blocks.map((b) => ({ ...b, z: b.z + actualCarSpeed })).filter((b) => b.z < 2)
     );
 
     answerBlocks.forEach((b) => {
-      if (Math.abs(b.z) < 1.2 && b.lane === carLane && !invincible) {
+      if (Math.abs(b.z) < 1.2 && b.lane === carLane && !invincible && !hitThisFrame.current && currentCorrect !== null) {
         if (b.value === currentCorrect) {
           updateScore(questionsAnswered + 1);
           setQuestionsAnswered(q => q + 1);
@@ -1167,7 +1215,7 @@ function GameLogic({
               setShowStreak(true);
               setTimeout(() => setShowStreak(false), 1200);
             }
-            if (newStreak >= 5 && newStreak % 5 === 0) {
+            if (newStreak >= 3 && newStreak % 3 === 0) {
               setShowConfetti(true);
               setTimeout(() => setShowConfetti(false), 2000);
             }
@@ -1177,11 +1225,21 @@ function GameLogic({
           setGreenFlash(true);
           setTimeout(() => setGreenFlash(false), 200);
 
+          // Show equation confirmation
+          setShowCorrectConfirm(`${currentQuestion} = ${currentCorrect}`);
+          setTimeout(() => setShowCorrectConfirm(null), 1200);
+
+          // Encouraging message
+          const messages = ['Super! ⭐', 'Goed zo! 🎉', 'Knap! 💪', 'Top! 🌟', 'Yes! 🏆', 'Wauw! ✨', 'Lekker! 🚀', 'Cool! 😎'];
+          setEncouragement(messages[Math.floor(Math.random() * messages.length)]);
+          setTimeout(() => setEncouragement(null), 1200);
+
           if (currentRepeatId) {
             removePendingRepeat(currentRepeatId, currentPlayer);
             setPendingRepeats(getPendingRepeats(currentPlayer));
           }
         } else {
+          hitThisFrame.current = true;
           setLives((l) => l - 1);
           setInvincible(true);
           setInvStart(now);
@@ -1223,7 +1281,7 @@ function GameLogic({
     );
 
     obstacles.forEach((o) => {
-      if (Math.abs(o.z) < 1.2 && o.lane === carLane && !invincible) {
+      if (Math.abs(o.z) < 1.2 && o.lane === carLane && !invincible && !hitThisFrame.current) {
         const gateInSameLane = answerBlocks.find(gate => gate.lane === carLane);
         const protectionTime = 2000;
         const protectionDistance = actualCarSpeed * protectionTime / 16.67;
@@ -1235,6 +1293,7 @@ function GameLogic({
         }
 
         if (!isProtected) {
+          hitThisFrame.current = true;
           setLives((l) => l - 1);
           setInvincible(true);
           setInvStart(now);
@@ -1251,10 +1310,14 @@ function GameLogic({
       setInvincible(false);
     }
 
-    if (lives <= 0 && phase === "play") {
-      setPhase("gameover");
-      setShowGameOver(true);
-    }
+    // Check game over - use callback to read actual current lives value
+    setLives(currentLives => {
+      if (currentLives <= 0 && phase === "play") {
+        setPhase("gameover");
+        setShowGameOver(true);
+      }
+      return currentLives; // don't change, just read
+    });
   });
 
   // Spawn new gates
@@ -1320,22 +1383,6 @@ function GameLogic({
     return () => clearInterval(t);
   }, [phase, lanes, blockStartZ, gateIntervalMs, lastGateTime, answerBlocks.length]);
 
-  // Buffer management
-  useEffect(() => {
-    if (phase !== "play") return;
-    const checkBuffer = () => {
-      const approaching = answerBlocks.filter((b) => b.z > -30 && b.z < 10);
-      if (approaching.length > 0 && !bufferActive) {
-        setBufferActive(true);
-        const closest = approaching.reduce((c, g) => Math.abs(g.z) < Math.abs(c.z) ? g : c);
-        const timeToReach = Math.abs(closest.z) / actualCarSpeed * 16.67;
-        setTimeout(() => setBufferActive(false), timeToReach + bufferTime);
-      }
-    };
-    const interval = setInterval(checkBuffer, 500);
-    return () => clearInterval(interval);
-  }, [answerBlocks, bufferActive, actualCarSpeed, bufferTime]);
-
   return null;
 }
 
@@ -1345,14 +1392,14 @@ function GameLogic({
 function WorldScrollUpdater({ phase, actualCarSpeed }) {
   useFrame(() => {
     if (phase === "play") {
-      worldScroll += actualCarSpeed * 15;
+      worldScroll += actualCarSpeed;
     }
   });
   return null;
 }
 
 // --- Camera follows road offset at car position (z=0), very subtle ---
-function CameraController({ phase, speedBoost }) {
+function CameraController({ phase }) {
   const { camera } = useThree();
 
   useFrame(() => {
@@ -1367,11 +1414,6 @@ function CameraController({ phase, speedBoost }) {
       const targetTilt = -offset.x * 0.008;
       camera.rotation.z += (targetTilt - camera.rotation.z) * 0.05;
 
-      // Speed shake
-      if (speedBoost) {
-        camera.position.x += Math.sin(Date.now() * 0.05) * 0.03;
-        camera.position.y += Math.sin(Date.now() * 0.07) * 0.02;
-      }
     } else {
       camera.position.set(0, 4.2, 12);
       camera.rotation.z = 0;
@@ -1433,11 +1475,17 @@ function CurvedRoad({ lanes }) {
         curbRefs.current.right[i].position.set(offset.x + roadHalf - 0.15, offset.y - 0.28, z);
       }
     }
-    // Lane dash segments
+    // Lane dash segments - scroll with worldScroll and wrap around
+    const dashSpacing = 5;
+    const dashRange = 40 * dashSpacing; // total range of dashes
     for (let d = 0; d < dashRefs.current.length; d++) {
       const ref = dashRefs.current[d];
       if (ref && ref.userData) {
-        const z = ref.userData.z;
+        // Scroll dashes forward and wrap
+        let z = ref.userData.baseZ + (worldScroll % dashSpacing);
+        // Wrap into visible range
+        while (z > startZ + dashSpacing) z -= dashRange;
+        while (z < startZ - dashRange + dashSpacing) z += dashRange;
         const offset = getRoadOffset(z);
         ref.position.x = offset.x + ref.userData.laneX;
         ref.position.y = offset.y - 0.23;
@@ -1452,7 +1500,7 @@ function CurvedRoad({ lanes }) {
     for (let lane = 0; lane < lanes - 1; lane++) {
       const lx = (lane - (lanes - 2) / 2) * 2.5;
       for (let j = 0; j < 40; j++) {
-        result.push({ laneX: lx, z: startZ - j * 5, id: `d${lane}_${j}` });
+        result.push({ laneX: lx, baseZ: startZ - j * 5, id: `d${lane}_${j}` });
       }
     }
     return result;
@@ -1499,7 +1547,7 @@ function CurvedRoad({ lanes }) {
         <mesh
           key={d.id}
           ref={el => {
-            if (el) { el.userData = { laneX: d.laneX, z: d.z }; }
+            if (el) { el.userData = { laneX: d.laneX, baseZ: d.baseZ }; }
             dashRefs.current[idx] = el;
           }}
         >
@@ -1576,8 +1624,11 @@ function ScrollingScenery({ lanes, phase, actualCarSpeed }) {
 
     const mountains = [];
     for (let i = 0; i < 10; i++) {
+      // Place mountains far from road on alternating sides
+      const side = i % 2 === 0 ? -1 : 1;
+      const dist = 35 + seededRandom(i * 37 + 11) * 30;
       mountains.push({
-        x: -50 + seededRandom(i * 37 + 11) * 100,
+        x: side * dist,
         zBase: (i / 10) * LOOP_LENGTH,
         height: 8 + seededRandom(i * 41 + 7) * 12,
         width: 6 + seededRandom(i * 43 + 5) * 8,
@@ -1608,7 +1659,7 @@ function ScrollingScenery({ lanes, phase, actualCarSpeed }) {
 
   useFrame(() => {
     if (phase === "play") {
-      scrollOffset.current += actualCarSpeed * 15;
+      scrollOffset.current += actualCarSpeed;
     }
   });
 
