@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { Html, Sky, OrbitControls } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Html, Sky } from "@react-three/drei";
+import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 import Car from "./Car.jsx";
 import ObstacleCar from "./ObstacleCar.jsx";
@@ -10,57 +11,26 @@ const CAR_SPEED = 0.05;
 const OBSTACLE_INTERVAL = 3000;
 const INVINCIBILITY_TIME = 2000;
 const COUNTDOWN_START = 3;
-const BLOCK_START_Z = -100; // Changed from -60 to -100 (spawn at top of screen)
+const BLOCK_START_Z = -100;
 const LANES_MIN = 2;
 const LANES_MAX = 10;
-const ROAD_COLOR = "#777";
-const REPEAT_AFTER_QUESTIONS = 5; // Repeat incorrect answers after this many questions
-const CAR_LENGTH = 2.4; // Length of a car for spacing calculations
-const GATE_PROTECTION_DISTANCE = CAR_LENGTH * 3; // 3 car lengths protection
+const ROAD_COLOR = "#555";
+const REPEAT_AFTER_QUESTIONS = 5;
+const CAR_LENGTH = 2.4;
+const GATE_PROTECTION_DISTANCE = CAR_LENGTH * 3;
+const ALL_TABLES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-// --- Styles ---
-const HUD_STYLE = {
-  position: "absolute",
-  top: 20,
-  left: 20,
-  background: "rgba(0,0,0,0.78)",
-  color: "#fff",
-  fontSize: 22,
-  borderRadius: 7,
-  padding: "10px 18px",
-  zIndex: 10,
-  fontWeight: 600,
-};
+// --- World scroll & road curve system ---
+// Module-level so all 3D components can read it without prop drilling
+let worldScroll = 0;
 
-const SOM_STYLE = {
-  position: "absolute",
-  top: 50, // Moved up from 80 to position above road start
-  left: "50%",
-  transform: "translateX(-50%)",
-  background: "#fff",
-  color: "#000",
-  fontSize: "clamp(24px, 5vw, 48px)", // Responsive font size
-  border: "4px solid #ff4141",
-  borderRadius: 12,
-  padding: "12px 30px", // Slightly reduced padding for mobile
-  fontWeight: 700,
-  zIndex: 10,
-  boxShadow: "0 2px 16px #0002",
-  maxWidth: "90vw", // Prevent overflow on small screens
-  textAlign: "center",
-};
-
-const ANSWER_LABEL_STYLE = {
-  background: "#fff",
-  color: "#000",
-  fontWeight: 700,
-  fontSize: 216, // Reduced from 240 (10% smaller)
-  borderRadius: 8,
-  padding: "6px 18px",
-  border: "2px solid #222",
-  boxShadow: "0 2px 8px #0002",
-  pointerEvents: "none",
-};
+function getRoadOffset(z) {
+  const t = (z + worldScroll) * 0.006;
+  return {
+    x: Math.sin(t * 1.1) * 2.8 + Math.sin(t * 0.47) * 1.4,
+    y: Math.sin(t * 0.7) * 1.0 + Math.cos(t * 0.35) * 0.5,
+  };
+}
 
 // --- Local Storage Functions ---
 const getHighScore = (player = 'Floris') => {
@@ -78,21 +48,9 @@ const getIncorrectAnswers = (player = 'Floris') => {
 
 const addIncorrectAnswer = (question, correctAnswer, givenAnswer, player = 'Floris') => {
   const incorrectAnswers = getIncorrectAnswers(player);
-  const newEntry = {
-    question,
-    correctAnswer,
-    givenAnswer,
-    timestamp: Date.now(),
-    id: Math.random().toString(36).slice(2)
-  };
-  
-  incorrectAnswers.unshift(newEntry); // Add to beginning
-  
-  // Keep only last 10
-  if (incorrectAnswers.length > 10) {
-    incorrectAnswers.splice(10);
-  }
-  
+  const newEntry = { question, correctAnswer, givenAnswer, timestamp: Date.now(), id: Math.random().toString(36).slice(2) };
+  incorrectAnswers.unshift(newEntry);
+  if (incorrectAnswers.length > 10) incorrectAnswers.splice(10);
   localStorage.setItem(`tafelRaceIncorrectAnswers_${player}`, JSON.stringify(incorrectAnswers));
 };
 
@@ -103,14 +61,7 @@ const getPendingRepeats = (player = 'Floris') => {
 
 const addPendingRepeat = (question, correctAnswer, player = 'Floris') => {
   const pendingRepeats = getPendingRepeats(player);
-  const newRepeat = {
-    question,
-    correctAnswer,
-    addedAt: Date.now(),
-    id: Math.random().toString(36).slice(2)
-  };
-  
-  pendingRepeats.push(newRepeat);
+  pendingRepeats.push({ question, correctAnswer, addedAt: Date.now(), id: Math.random().toString(36).slice(2) });
   localStorage.setItem(`tafelRacePendingRepeats_${player}`, JSON.stringify(pendingRepeats));
 };
 
@@ -120,7 +71,6 @@ const removePendingRepeat = (id, player = 'Floris') => {
   localStorage.setItem(`tafelRacePendingRepeats_${player}`, JSON.stringify(filtered));
 };
 
-// Add new statistics functions
 const getStatistics = (player = 'Floris') => {
   const stored = localStorage.getItem(`tafelRaceStatistics_${player}`);
   return stored ? JSON.parse(stored) : {};
@@ -128,16 +78,9 @@ const getStatistics = (player = 'Floris') => {
 
 const updateStatistics = (question, isCorrect, player = 'Floris') => {
   const stats = getStatistics(player);
-  
-  if (!stats[question]) {
-    stats[question] = { attempts: 0, mistakes: 0 };
-  }
-  
+  if (!stats[question]) stats[question] = { attempts: 0, mistakes: 0 };
   stats[question].attempts++;
-  if (!isCorrect) {
-    stats[question].mistakes++;
-  }
-  
+  if (!isCorrect) stats[question].mistakes++;
   localStorage.setItem(`tafelRaceStatistics_${player}`, JSON.stringify(stats));
 };
 
@@ -147,15 +90,24 @@ const resetStatistics = (player = 'Floris') => {
   localStorage.removeItem(`tafelRacePendingRepeats_${player}`);
 };
 
+const getSelectedTables = (player = 'Floris') => {
+  const stored = localStorage.getItem(`tafelRaceSelectedTables_${player}`);
+  return stored ? JSON.parse(stored) : [1, 2, 3, 4, 5];
+};
+
+const setSelectedTables = (tables, player = 'Floris') => {
+  localStorage.setItem(`tafelRaceSelectedTables_${player}`, JSON.stringify(tables));
+};
+
 // --- Utility: Generate question ---
-function generateQuestion(lanes, questionsAnswered = 0, pendingRepeats = []) {
+function generateQuestion(lanes, questionsAnswered = 0, pendingRepeats = [], selectedTables = ALL_TABLES) {
+  const tables = selectedTables.length > 0 ? selectedTables : ALL_TABLES;
+
   // Check if we should repeat an incorrect answer
   if (pendingRepeats.length > 0 && questionsAnswered > 0 && questionsAnswered % REPEAT_AFTER_QUESTIONS === 0) {
     const repeatQuestion = pendingRepeats[0];
     const correct = repeatQuestion.correctAnswer;
     let options = [correct];
-    
-    // Generate other options based on the table from the question
     const questionParts = repeatQuestion.question.split(' × ');
     if (questionParts.length === 2) {
       const table = parseInt(questionParts[0]);
@@ -164,56 +116,82 @@ function generateQuestion(lanes, questionsAnswered = 0, pendingRepeats = []) {
         if (!options.includes(opt)) options.push(opt);
       }
     } else {
-      // Fallback if question format is unexpected
       while (options.length < lanes) {
         let opt = Math.floor(Math.random() * 100) + 1;
         if (!options.includes(opt)) options.push(opt);
       }
     }
-    
-    // Shuffle options
     for (let i = options.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [options[i], options[j]] = [options[j], options[i]];
     }
-    
     return [repeatQuestion.question, correct, options, repeatQuestion.id];
   }
-  
-  // Generate new question
-  const table = Math.floor(Math.random() * 10) + 1;
+
+  // Generate new question from selected tables
+  const table = tables[Math.floor(Math.random() * tables.length)];
   const multiplier = Math.floor(Math.random() * 10) + 1;
   const correct = table * multiplier;
   let options = [correct];
-  
+
   while (options.length < lanes) {
-    let opt = table * (Math.floor(Math.random() * 10) + 1);
+    const randomTable = tables[Math.floor(Math.random() * tables.length)];
+    let opt = randomTable * (Math.floor(Math.random() * 10) + 1);
     if (!options.includes(opt)) options.push(opt);
   }
-  
-  // Shuffle
+
   for (let i = options.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [options[i], options[j]] = [options[j], options[i]];
   }
-  
+
   return [`${table} × ${multiplier}`, correct, options, null];
+}
+
+// --- Confetti Particle ---
+function ConfettiParticle({ delay, color }) {
+  const style = {
+    position: 'absolute',
+    left: `${Math.random() * 100}%`,
+    top: '-20px',
+    width: `${8 + Math.random() * 12}px`,
+    height: `${8 + Math.random() * 12}px`,
+    background: color,
+    borderRadius: Math.random() > 0.5 ? '50%' : '2px',
+    animation: `confetti ${1.5 + Math.random() * 1.5}s ease-out ${delay}s forwards`,
+    pointerEvents: 'none',
+    zIndex: 100,
+  };
+  return <div style={style} />;
+}
+
+// --- Star burst effect ---
+function StarBurst({ x, y }) {
+  const stars = ['⭐', '✨', '🌟', '💫'];
+  return (
+    <div style={{ position: 'absolute', left: x, top: y, pointerEvents: 'none', zIndex: 100 }}>
+      {stars.map((s, i) => (
+        <span key={i} style={{
+          position: 'absolute',
+          fontSize: 24 + Math.random() * 16,
+          animation: `starBurst 0.8s ease-out ${i * 0.1}s forwards`,
+          transform: `translate(${(Math.random() - 0.5) * 60}px, ${(Math.random() - 0.5) * 60}px)`,
+        }}>{s}</span>
+      ))}
+    </div>
+  );
 }
 
 // --- Main Game Component ---
 function TafelRaceGame() {
-  // --- State ---
   const [phase, setPhase] = useState("init");
   const [currentPlayer, setCurrentPlayer] = useState('Floris');
-  
-  // Detect mobile device (portrait orientation) and set default lanes accordingly
   const [lanes, setLanes] = useState(() => {
     const isMobile = window.innerWidth < window.innerHeight;
-    return isMobile ? 4 : 6;
+    return 4;
   });
-  
-  const [carSpeed, setCarSpeed] = useState(150); // Changed from 50 to 150
-  const [gateInterval, setGateInterval] = useState(0); // Changed from 4 to 0
+  const [carSpeed, setCarSpeed] = useState(150);
+  const [gateInterval, setGateInterval] = useState(0);
   const [score, setScore] = useState(0);
   const [highScore, setHighScoreState] = useState(getHighScore('Floris'));
   const [lives, setLives] = useState(3);
@@ -237,15 +215,45 @@ function TafelRaceGame() {
   const [greenFlash, setGreenFlash] = useState(false);
   const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
   const [correctAnswerDisplay, setCorrectAnswerDisplay] = useState({ question: '', answer: '' });
+  const [selectedTables, setSelectedTablesState] = useState(getSelectedTables('Floris'));
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const [showStreak, setShowStreak] = useState(false);
+  const [newHighScore, setNewHighScore] = useState(false);
 
-  // Calculate dynamic values
-  const actualCarSpeed = (carSpeed / 1000) * (speedBoost ? 4 : 1); // Changed from 2 to 4
+  const actualCarSpeed = (carSpeed / 1000) * (speedBoost ? 4 : 1);
   const blockStartZ = BLOCK_START_Z;
   const gateIntervalMs = gateInterval * 1000;
   const bufferTime = 2000;
 
+  const confettiColors = ['#FF6B6B', '#FFE66D', '#4ECDC4', '#45B7D1', '#96E6A1', '#DDA0DD', '#FFA07A', '#87CEEB'];
+
+  // --- Table selection ---
+  const toggleTable = useCallback((table) => {
+    setSelectedTablesState(prev => {
+      const next = prev.includes(table)
+        ? prev.filter(t => t !== table)
+        : [...prev, table].sort((a, b) => a - b);
+      if (next.length === 0) return prev; // Must have at least 1
+      setSelectedTables(next, currentPlayer);
+      return next;
+    });
+  }, [currentPlayer]);
+
+  const selectAllTables = useCallback(() => {
+    setSelectedTablesState(ALL_TABLES);
+    setSelectedTables(ALL_TABLES, currentPlayer);
+  }, [currentPlayer]);
+
+  const selectEasyTables = useCallback(() => {
+    const easy = [1, 2, 5, 10];
+    setSelectedTablesState(easy);
+    setSelectedTables(easy, currentPlayer);
+  }, [currentPlayer]);
+
   // --- Handlers ---
   const startGame = useCallback(() => {
+    if (selectedTables.length === 0) return;
     setScore(0);
     setLives(3);
     setCarLane(0);
@@ -254,32 +262,34 @@ function TafelRaceGame() {
     setShowGameOver(false);
     setCountdown(COUNTDOWN_START);
     setQuestionsAnswered(0);
+    setStreak(0);
+    setNewHighScore(false);
+    worldScroll = 0;
     setPhase("countdown");
-    // Refresh pending repeats from storage for current player
     setPendingRepeats(getPendingRepeats(currentPlayer));
-  }, [currentPlayer]);
+  }, [currentPlayer, selectedTables]);
 
   const backToSettings = useCallback(() => {
     setPhase("init");
     setShowGameOver(false);
   }, []);
 
-  // Update score and check for high score
   const updateScore = useCallback((newScore) => {
     setScore(newScore);
     const currentHighScore = getHighScore(currentPlayer);
     if (newScore > currentHighScore) {
       setHighScoreState(newScore);
       setHighScore(newScore, currentPlayer);
+      if (newScore > 0) setNewHighScore(true);
     }
   }, [currentPlayer]);
 
-  // Handle player change
   const handlePlayerChange = useCallback((newPlayer) => {
     setCurrentPlayer(newPlayer);
     setHighScoreState(getHighScore(newPlayer));
     setIncorrectAnswers(getIncorrectAnswers(newPlayer));
     setPendingRepeats(getPendingRepeats(newPlayer));
+    setSelectedTablesState(getSelectedTables(newPlayer));
   }, []);
 
   const goToStatistics = useCallback(() => {
@@ -291,16 +301,13 @@ function TafelRaceGame() {
     if (phase !== "countdown") return;
     if (countdown === 0) {
       setPhase("play");
-      // Spawn first question
-      const [q, c, opts, repeatId] = generateQuestion(lanes, questionsAnswered, getPendingRepeats(currentPlayer));
+      const [q, c, opts, repeatId] = generateQuestion(lanes, questionsAnswered, getPendingRepeats(currentPlayer), selectedTables);
       setCurrentQuestion(q);
       setCurrentCorrect(c);
       setCurrentRepeatId(repeatId);
       setAnswerBlocks(
         opts.map((opt, i) => ({
-          lane: i,
-          z: BLOCK_START_Z,
-          value: opt,
+          lane: i, z: BLOCK_START_Z, value: opt,
           id: Math.random().toString(36).slice(2),
           questionId: Date.now().toString(),
         }))
@@ -309,183 +316,189 @@ function TafelRaceGame() {
     }
     const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, countdown, lanes, questionsAnswered, currentPlayer]);
+  }, [phase, countdown, lanes, questionsAnswered, currentPlayer, selectedTables]);
 
   // --- Keyboard controls ---
   useEffect(() => {
     if (phase !== "play") return;
-    
     const onKeyDown = (e) => {
       if (e.key === "ArrowLeft") setCarLane((l) => Math.max(l - 1, 0));
       if (e.key === "ArrowRight") setCarLane((l) => Math.min(l + 1, lanes - 1));
       if (e.key === "ArrowUp") setSpeedBoost(true);
     };
-    
     const onKeyUp = (e) => {
       if (e.key === "ArrowUp") setSpeedBoost(false);
     };
-    
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
-    
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
   }, [phase, lanes]);
 
-  // --- Lane positions ---
-  const laneX = (lane) => (lane - (lanes - 1) / 2) * 2.5; // Increased spacing from 2 to 2.5
+  const laneX = (lane) => (lane - (lanes - 1) / 2) * 2.5;
 
-  // Add lane button handler
   const handleLaneClick = useCallback((targetLane) => {
-    if (phase === "play") {
-      setCarLane(targetLane);
-    }
+    if (phase === "play") setCarLane(targetLane);
   }, [phase]);
+
+  // --- Lives display as hearts ---
+  const heartsDisplay = useMemo(() => {
+    const hearts = [];
+    for (let i = 0; i < 3; i++) {
+      hearts.push(i < lives ? '❤️' : '🖤');
+    }
+    return hearts.join(' ');
+  }, [lives]);
 
   // --- Render ---
   return (
-    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "#7ecbff" }}>
-      {/* Red flash overlay for life loss */}
+    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "linear-gradient(180deg, #87CEEB 0%, #E0F7FA 50%, #B2EBF2 100%)" }}>
+      {/* Red flash overlay */}
       {redFlash && (
         <div style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(255, 0, 0, 0.6)",
-          zIndex: 50,
-          pointerEvents: "none",
+          position: "absolute", top: 0, left: 0, width: "100vw", height: "100vh",
+          background: "rgba(255, 50, 50, 0.5)", zIndex: 50, pointerEvents: "none",
+          borderRadius: 0,
         }} />
       )}
 
-      {/* Green flash overlay for correct answer */}
+      {/* Green flash overlay */}
       {greenFlash && (
         <div style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0, 255, 0, 0.4)",
-          zIndex: 50,
-          pointerEvents: "none",
+          position: "absolute", top: 0, left: 0, width: "100vw", height: "100vh",
+          background: "rgba(46, 213, 115, 0.4)", zIndex: 50, pointerEvents: "none",
         }} />
+      )}
+
+      {/* Confetti */}
+      {showConfetti && (
+        <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 90, overflow: 'hidden' }}>
+          {Array.from({ length: 30 }).map((_, i) => (
+            <ConfettiParticle key={i} delay={i * 0.05} color={confettiColors[i % confettiColors.length]} />
+          ))}
+        </div>
       )}
 
       {/* Correct answer display for wrong answers */}
       {showCorrectAnswer && (
         <div style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0, 0, 0, 0.8)",
-          color: "#fff",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 60,
-          pointerEvents: "none",
+          position: "absolute", top: 0, left: 0, width: "100vw", height: "100vh",
+          background: "rgba(0, 0, 0, 0.85)", color: "#fff",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          zIndex: 60, pointerEvents: "none",
         }}>
-          <div style={{ fontSize: 60, fontWeight: 700, marginBottom: 20 }}>
+          <div style={{ fontSize: "clamp(24px, 6vw, 50px)", fontWeight: 700, marginBottom: 10, fontFamily: "'Nunito', sans-serif" }}>
+            Oeps! Het goede antwoord was:
+          </div>
+          <div style={{ fontSize: "clamp(32px, 8vw, 60px)", fontWeight: 700, color: "#FFE66D", fontFamily: "'Fredoka One', cursive" }}>
             {correctAnswerDisplay.question}
           </div>
-          <div style={{ fontSize: 80, fontWeight: 900, color: "#4CAF50" }}>
+          <div style={{ fontSize: "clamp(48px, 12vw, 90px)", fontWeight: 900, color: "#2ED573", fontFamily: "'Fredoka One', cursive" }}>
             = {correctAnswerDisplay.answer}
+          </div>
+          <div style={{ fontSize: "clamp(18px, 4vw, 30px)", marginTop: 15, color: "#ccc" }}>
+            Probeer het nog een keer! 💪
           </div>
         </div>
       )}
-      
+
+      {/* Streak display */}
+      {showStreak && streak >= 3 && (
+        <div style={{
+          position: 'absolute', top: '15%', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 55, pointerEvents: 'none', animation: 'bounceIn 0.5s ease-out',
+          fontFamily: "'Fredoka One', cursive", fontSize: 'clamp(28px, 6vw, 48px)',
+          color: '#FFE66D', textShadow: '0 3px 10px rgba(0,0,0,0.5)',
+        }}>
+          🔥 {streak}x Streak! 🔥
+        </div>
+      )}
+
       {/* HUD */}
       <div style={{
-        ...HUD_STYLE,
-        fontSize: "clamp(14px, 3vw, 22px)", // Responsive font size
-        padding: "8px 16px", // Slightly reduced padding for mobile
+        position: "absolute", top: 12, left: 12,
+        background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)",
+        color: "#fff", fontSize: "clamp(13px, 2.8vw, 20px)",
+        borderRadius: 12, padding: "8px 14px", zIndex: 10,
+        fontWeight: 700, fontFamily: "'Nunito', sans-serif",
+        border: '2px solid rgba(255,255,255,0.15)',
       }}>
-        Speler: {currentPlayer} &nbsp;|&nbsp; Score: {score} &nbsp;|&nbsp; Lives: {lives}
-        <br />
-        High Score: {highScore}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: '#FFE66D' }}>🏎️ {currentPlayer}</span>
+          <span style={{ color: '#aaa' }}>|</span>
+          <span>⭐ {score}</span>
+          <span style={{ color: '#aaa' }}>|</span>
+          <span>{heartsDisplay}</span>
+        </div>
+        {highScore > 0 && (
+          <div style={{ fontSize: "clamp(10px, 2vw, 14px)", color: "#ffd700", marginTop: 2 }}>
+            🏆 Record: {highScore}
+            {newHighScore && <span style={{ color: '#2ED573', marginLeft: 6 }}>NIEUW!</span>}
+          </div>
+        )}
       </div>
-      
-      {/* Show current question at top of screen above the road */}
+
+      {/* Show current question at top */}
       {phase === "play" && currentQuestion && answerBlocks.length > 0 && (
-        <div style={SOM_STYLE}>
+        <div style={{
+          position: "absolute", top: 50, left: "50%", transform: "translateX(-50%)",
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+          color: "#fff", fontSize: "clamp(24px, 5vw, 48px)",
+          borderRadius: 16, padding: "10px 28px", fontWeight: 700,
+          zIndex: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+          fontFamily: "'Fredoka One', cursive",
+          border: '3px solid rgba(255,255,255,0.3)',
+          animation: 'pop 0.3s ease-out',
+        }}>
           {currentQuestion}
         </div>
       )}
 
-      {/* Lane Control Buttons for Tablet/Touch Support */}
+      {/* Lane Control Buttons for Touch */}
       {phase === "play" && answerBlocks.length > 0 && (
         <>
-          {/* Show current question above the buttons */}
           <div style={{
-            position: "absolute",
-            bottom: "clamp(100px, 16vh, 140px)", // Position above the buttons
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(0, 0, 0, 0.8)",
-            color: "#fff",
-            fontSize: "clamp(18px, 4vw, 32px)", // Responsive font size
-            fontWeight: "700",
-            padding: "8px 16px",
-            borderRadius: 8,
-            zIndex: 15,
-            textAlign: "center",
-            border: "2px solid #ff4141",
+            position: "absolute", bottom: "clamp(95px, 15vh, 135px)", left: "50%", transform: "translateX(-50%)",
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            color: "#fff", fontSize: "clamp(16px, 3.5vw, 28px)", fontWeight: "700",
+            padding: "6px 14px", borderRadius: 10, zIndex: 15, textAlign: "center",
+            border: "2px solid rgba(255,255,255,0.3)", fontFamily: "'Fredoka One', cursive",
+            boxShadow: "0 4px 15px rgba(0,0,0,0.3)",
           }}>
             {currentQuestion}
           </div>
-          
-          {/* Lane buttons with answer values */}
+
           <div style={{
-            position: "absolute",
-            bottom: "clamp(20px, 4vh, 40px)", // Responsive bottom spacing
-            left: "50%",
-            transform: "translateX(-50%)",
-            display: "flex",
-            gap: "clamp(4px, 1vw, 8px)", // Responsive gap
-            zIndex: 15,
-            padding: "8px",
-            background: "rgba(0, 0, 0, 0.3)",
-            borderRadius: 12,
-            backdropFilter: "blur(5px)",
-            maxWidth: "95vw", // Prevent overflow
-            overflowX: "auto", // Allow horizontal scrolling if needed
+            position: "absolute", bottom: "clamp(20px, 4vh, 40px)", left: "50%", transform: "translateX(-50%)",
+            display: "flex", gap: "clamp(4px, 1vw, 8px)", zIndex: 15, padding: "8px 12px",
+            background: "rgba(0, 0, 0, 0.4)", borderRadius: 16,
+            backdropFilter: "blur(8px)", maxWidth: "95vw", overflowX: "auto",
+            border: '2px solid rgba(255,255,255,0.1)',
           }}>
-            {answerBlocks.map((block, index) => (
+            {answerBlocks.map((block) => (
               <button
                 key={block.id}
+                className="answer-btn"
                 onClick={() => handleLaneClick(block.lane)}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  handleLaneClick(block.lane);
-                }}
+                onTouchStart={(e) => { e.preventDefault(); handleLaneClick(block.lane); }}
                 style={{
-                  width: "clamp(50px, 10vw, 70px)", // Slightly wider for answer values
-                  height: "clamp(50px, 10vw, 70px)", // Slightly taller for answer values
-                  borderRadius: "10px",
-                  border: carLane === block.lane ? "3px solid #ff4141" : "2px solid #fff",
-                  background: carLane === block.lane ? "#ff4141" : "rgba(255, 255, 255, 0.9)",
-                  color: carLane === block.lane ? "#fff" : "#000",
-                  fontSize: "clamp(14px, 3vw, 20px)", // Responsive font for answer values
-                  fontWeight: "900",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "all 0.2s ease",
-                  userSelect: "none",
-                  touchAction: "manipulation",
-                  boxShadow: carLane === block.lane 
-                    ? "0 3px 10px rgba(255, 65, 65, 0.4)" 
-                    : "0 2px 6px rgba(0, 0, 0, 0.2)",
-                  transform: carLane === block.lane ? "scale(1.05)" : "scale(1)",
-                  flexShrink: 0, // Prevent shrinking in flexbox
+                  width: "clamp(50px, 10vw, 70px)", height: "clamp(50px, 10vw, 70px)",
+                  borderRadius: "12px",
+                  border: carLane === block.lane ? "3px solid #FFE66D" : "2px solid rgba(255,255,255,0.5)",
+                  background: carLane === block.lane
+                    ? "linear-gradient(135deg, #FF6B6B, #ee5a52)"
+                    : "rgba(255, 255, 255, 0.9)",
+                  color: carLane === block.lane ? "#fff" : "#333",
+                  fontSize: "clamp(14px, 3vw, 22px)", fontWeight: "900",
+                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  userSelect: "none", touchAction: "manipulation",
+                  boxShadow: carLane === block.lane
+                    ? "0 4px 15px rgba(255, 107, 107, 0.5), inset 0 0 10px rgba(255,255,255,0.2)"
+                    : "0 2px 8px rgba(0, 0, 0, 0.2)",
+                  transform: carLane === block.lane ? "scale(1.08)" : "scale(1)",
+                  flexShrink: 0,
                 }}
               >
                 {block.value}
@@ -495,53 +508,36 @@ function TafelRaceGame() {
         </>
       )}
 
-      {/* Speed Boost Button for Touch Devices */}
+      {/* Speed Boost Button */}
       {phase === "play" && (
         <div style={{
-          position: "absolute",
-          bottom: "clamp(80px, 12vh, 120px)", // Responsive positioning
-          right: "clamp(15px, 3vw, 25px)",
-          zIndex: 15,
+          position: "absolute", bottom: "clamp(80px, 12vh, 120px)", right: "clamp(15px, 3vw, 25px)", zIndex: 15,
         }}>
           <button
-            onTouchStart={(e) => {
-              e.preventDefault();
-              setSpeedBoost(true);
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              setSpeedBoost(false);
-            }}
+            onTouchStart={(e) => { e.preventDefault(); setSpeedBoost(true); }}
+            onTouchEnd={(e) => { e.preventDefault(); setSpeedBoost(false); }}
             onMouseDown={() => setSpeedBoost(true)}
             onMouseUp={() => setSpeedBoost(false)}
             onMouseLeave={() => setSpeedBoost(false)}
             style={{
-              width: "clamp(60px, 12vw, 80px)", // Responsive size
-              height: "clamp(60px, 12vw, 80px)",
-              borderRadius: "50%",
-              border: "3px solid #fff",
-              background: speedBoost 
-                ? "linear-gradient(135deg, #ff6b6b, #ee5a52)" 
-                : "rgba(255, 255, 255, 0.8)",
-              color: speedBoost ? "#fff" : "#000",
-              fontSize: "clamp(12px, 2.5vw, 16px)", // Responsive font
-              fontWeight: "700",
-              cursor: "pointer",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "all 0.2s ease",
-              userSelect: "none",
-              touchAction: "manipulation",
-              boxShadow: speedBoost 
-                ? "0 4px 15px rgba(255, 107, 107, 0.4)" 
-                : "0 3px 10px rgba(0, 0, 0, 0.2)",
-              transform: speedBoost ? "scale(1.05)" : "scale(1)",
+              width: "clamp(55px, 11vw, 75px)", height: "clamp(55px, 11vw, 75px)",
+              borderRadius: "50%", border: "3px solid rgba(255,255,255,0.5)",
+              background: speedBoost
+                ? "linear-gradient(135deg, #FF6B6B, #ee5a52)"
+                : "rgba(255, 255, 255, 0.85)",
+              color: speedBoost ? "#fff" : "#333",
+              fontSize: "clamp(12px, 2.5vw, 16px)", fontWeight: "700",
+              cursor: "pointer", display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              userSelect: "none", touchAction: "manipulation",
+              boxShadow: speedBoost
+                ? "0 4px 20px rgba(255, 107, 107, 0.5)"
+                : "0 3px 12px rgba(0, 0, 0, 0.2)",
+              fontFamily: "'Nunito', sans-serif",
             }}
           >
-            <div style={{ fontSize: "clamp(18px, 4vw, 24px)", marginBottom: "2px" }}>🚀</div>
-            <div style={{ fontSize: "clamp(8px, 2vw, 12px)" }}>BOOST</div>
+            <div style={{ fontSize: "clamp(18px, 4vw, 24px)", marginBottom: "1px" }}>🚀</div>
+            <div style={{ fontSize: "clamp(7px, 1.8vw, 11px)", fontWeight: 900 }}>TURBO</div>
           </button>
         </div>
       )}
@@ -549,327 +545,325 @@ function TafelRaceGame() {
       {/* Countdown overlay */}
       {phase === "countdown" && (
         <div style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0,0,0,0.6)",
-          color: "#fff",
-          fontSize: 90,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 20,
-          fontWeight: 900,
+          position: "absolute", top: 0, left: 0, width: "100vw", height: "100vh",
+          background: "rgba(0,0,0,0.7)", backdropFilter: "blur(5px)",
+          color: "#fff", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", zIndex: 20,
         }}>
-          {countdown > 0 ? countdown : "GO!"}
+          <div style={{
+            fontSize: "clamp(80px, 20vw, 150px)", fontWeight: 900,
+            fontFamily: "'Fredoka One', cursive",
+            animation: 'countdownPulse 0.8s ease-out',
+            color: countdown > 0 ? '#FFE66D' : '#2ED573',
+            textShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            key: countdown,
+          }}>
+            {countdown > 0 ? countdown : "GO!"}
+          </div>
+          {countdown > 0 && (
+            <div style={{ fontSize: "clamp(18px, 4vw, 28px)", color: '#aaa', marginTop: 10, fontFamily: "'Nunito', sans-serif" }}>
+              Maak je klaar... 🏁
+            </div>
+          )}
         </div>
       )}
-      
+
       {/* Game Over overlay */}
       {showGameOver && (
         <div style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0,0,0,0.7)",
-          color: "#fff",
-          fontSize: 48,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 30,
+          position: "absolute", top: 0, left: 0, width: "100vw", height: "100vh",
+          background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)",
+          color: "#fff", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", zIndex: 30,
+          fontFamily: "'Nunito', sans-serif",
         }}>
-          <div style={{ marginBottom: 30 }}>Game Over</div>
-          <div style={{ fontSize: 32, marginBottom: 10 }}>Score: {score}</div>
-          <div style={{ fontSize: 24, marginBottom: 30, color: "#ffd700" }}>
-            High Score: {highScore}
+          <div style={{
+            fontSize: "clamp(36px, 8vw, 60px)", fontWeight: 900,
+            fontFamily: "'Fredoka One', cursive",
+            color: '#FF6B6B', marginBottom: 10,
+            animation: 'bounceIn 0.5s ease-out',
+          }}>
+            Game Over!
           </div>
-          <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", justifyContent: "center" }}>
+
+          <div style={{ fontSize: "clamp(20px, 5vw, 36px)", marginBottom: 8, animation: 'slideUp 0.5s ease-out 0.2s both' }}>
+            ⭐ Score: <span style={{ color: '#FFE66D', fontWeight: 900 }}>{score}</span>
+          </div>
+
+          <div style={{ fontSize: "clamp(16px, 4vw, 24px)", marginBottom: 8, color: "#ffd700", animation: 'slideUp 0.5s ease-out 0.3s both' }}>
+            🏆 Record: {highScore}
+            {newHighScore && <span style={{ color: '#2ED573', marginLeft: 8, fontWeight: 900 }}>NIEUW RECORD! 🎉</span>}
+          </div>
+
+          {streak >= 3 && (
+            <div style={{ fontSize: "clamp(14px, 3vw, 20px)", marginBottom: 15, color: "#FFA502", animation: 'slideUp 0.5s ease-out 0.4s both' }}>
+              🔥 Beste reeks: {streak} op rij!
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: "clamp(10px, 3vw, 20px)", flexWrap: "wrap", justifyContent: "center", marginTop: 10, animation: 'slideUp 0.5s ease-out 0.5s both' }}>
             <button
+              className="start-btn"
               style={{
-                fontSize: 28,
-                padding: "12px 40px",
-                borderRadius: 10,
-                border: "none",
-                background: "#ff4141",
-                color: "#fff",
-                fontWeight: 700,
-                cursor: "pointer",
-                touchAction: "manipulation",
+                fontSize: "clamp(18px, 4vw, 28px)", padding: "clamp(10px, 2.5vh, 14px) clamp(24px, 6vw, 44px)",
+                borderRadius: 14, border: "none",
+                background: "linear-gradient(135deg, #2ED573, #1ABC9C)",
+                color: "#fff", fontWeight: 700, cursor: "pointer",
+                touchAction: "manipulation", boxShadow: "0 4px 15px rgba(46,213,115,0.4)",
               }}
               onClick={startGame}
             >
-              Opnieuw
+              🔄 Nog een keer!
             </button>
             <button
+              className="start-btn"
               style={{
-                fontSize: 28,
-                padding: "12px 40px",
-                borderRadius: 10,
-                border: "none",
-                background: "#666",
-                color: "#fff",
-                fontWeight: 700,
-                cursor: "pointer",
+                fontSize: "clamp(18px, 4vw, 28px)", padding: "clamp(10px, 2.5vh, 14px) clamp(24px, 6vw, 44px)",
+                borderRadius: 14, border: "2px solid rgba(255,255,255,0.3)",
+                background: "rgba(255,255,255,0.1)",
+                color: "#fff", fontWeight: 700, cursor: "pointer",
                 touchAction: "manipulation",
               }}
               onClick={backToSettings}
             >
-              Instellingen
+              ⚙️ Menu
             </button>
           </div>
         </div>
       )}
-      
+
       {/* Statistics page */}
       {phase === "statistics" && (
-        <StatisticsPage 
-          currentPlayer={currentPlayer}
-          onBack={() => setPhase("init")}
-        />
+        <StatisticsPage currentPlayer={currentPlayer} onBack={() => setPhase("init")} />
       )}
-      
-      {/* Settings page */}
+
+      {/* === SETTINGS / START SCREEN === */}
       {phase === "init" && (
         <div style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0,0,0,0.7)",
-          color: "#fff",
-          fontSize: "clamp(20px, 4vw, 32px)", // Responsive font
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "flex-start",
-          zIndex: 40,
-          padding: "clamp(10px, 3vw, 20px)", // Responsive padding
-          overflowY: "auto",
+          position: "absolute", top: 0, left: 0, width: "100vw", height: "100vh",
+          background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)",
+          color: "#fff", display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "flex-start", zIndex: 40, padding: "clamp(10px, 3vw, 20px)",
+          overflowY: "auto", fontFamily: "'Nunito', sans-serif",
         }}>
-          <div style={{ 
-            marginBottom: "clamp(20px, 5vh, 40px)",
-            fontSize: "clamp(24px, 6vw, 40px)",
+          {/* Title */}
+          <div style={{
+            marginBottom: "clamp(6px, 1.5vh, 12px)", marginTop: "clamp(4px, 1vh, 8px)",
+            textAlign: 'center',
           }}>
-            Tafel Race Game
-          </div>
-          
-          {/* Player Selection */}
-          <div style={{ 
-            fontSize: "clamp(18px, 4vw, 28px)", 
-            marginBottom: "clamp(15px, 4vh, 30px)", 
-            textAlign: "center" 
-          }}>
-            <div style={{ marginBottom: 15 }}>Kies speler:</div>
-            <div style={{ 
-              display: "flex", 
-              gap: "clamp(10px, 3vw, 20px)", 
-              justifyContent: "center", 
-              flexWrap: "wrap" 
+            <div className="game-title" style={{
+              fontSize: "clamp(26px, 6vw, 44px)",
+              fontFamily: "'Fredoka One', cursive",
+              lineHeight: 1.1,
             }}>
-              <button
-                style={{
-                  fontSize: "clamp(16px, 3.5vw, 24px)",
-                  padding: "clamp(8px, 2vw, 12px) clamp(15px, 4vw, 30px)",
-                  borderRadius: 10,
-                  border: "3px solid #ff4141",
-                  background: currentPlayer === 'Floris' ? "#ff4141" : "transparent",
-                  color: "#fff",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                  touchAction: "manipulation",
-                }}
-                onClick={() => handlePlayerChange('Floris')}
-              >
-                👦 Floris
-              </button>
-              <button
-                style={{
-                  fontSize: "clamp(16px, 3.5vw, 24px)",
-                  padding: "clamp(8px, 2vw, 12px) clamp(15px, 4vw, 30px)",
-                  borderRadius: 10,
-                  border: "3px solid #ff4141",
-                  background: currentPlayer === 'Esmee' ? "#ff4141" : "transparent",
-                  color: "#fff",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                  touchAction: "manipulation",
-                }}
-                onClick={() => handlePlayerChange('Esmee')}
-              >
-                👧 Esmee
-              </button>
-              <button
-                style={{
-                  fontSize: "clamp(16px, 3.5vw, 24px)",
-                  padding: "clamp(8px, 2vw, 12px) clamp(15px, 4vw, 30px)",
-                  borderRadius: 10,
-                  border: "3px solid #ff4141",
-                  background: currentPlayer === 'Tim' ? "#ff4141" : "transparent",
-                  color: "#fff",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                  touchAction: "manipulation",
-                }}
-                onClick={() => handlePlayerChange('Tim')}
-              >
-                👨‍🦳 Tim
-              </button>
+              🏎️ Tafel Racer 3.0
+            </div>
+            <div style={{ fontSize: "clamp(11px, 2vw, 14px)", color: '#8892b0', marginTop: 2 }}>
+              Leer de tafels door te racen!
             </div>
           </div>
-          
-          <div style={{ 
-            fontSize: "clamp(14px, 3vw, 22px)", 
-            marginBottom: "clamp(10px, 2vh, 20px)",
-            textAlign: "center",
-          }}>
-            Aantal rijstroken: {lanes}
-            <input
-              type="range"
-              min={LANES_MIN}
-              max={LANES_MAX}
-              value={lanes}
-              onChange={e => setLanes(+e.target.value)}
-              style={{ 
-                marginLeft: 12, 
-                width: "clamp(100px, 25vw, 150px)" // Responsive slider width
-              }}
-            />
-          </div>
-          
-          <div style={{ 
-            fontSize: "clamp(14px, 3vw, 22px)", 
-            marginBottom: "clamp(10px, 2vh, 20px)",
-            textAlign: "center",
-          }}>
-            Snelheid: {carSpeed}
-            <input
-              type="range"
-              min={20}
-              max={200}
-              value={carSpeed}
-              onChange={e => setCarSpeed(+e.target.value)}
-              style={{ 
-                marginLeft: 12, 
-                width: "clamp(100px, 25vw, 150px)"
-              }}
-            />
-          </div>
-          
-          <div style={{ 
-            fontSize: "clamp(14px, 3vw, 22px)", 
-            marginBottom: "clamp(15px, 3vh, 30px)",
-            textAlign: "center",
-          }}>
-            Poorten interval: {gateInterval}s
-            <input
-              type="range"
-              min={2}
-              max={8}
-              value={gateInterval}
-              onChange={e => setGateInterval(+e.target.value)}
-              style={{ 
-                marginLeft: 12, 
-                width: "clamp(100px, 25vw, 150px)"
-              }}
-            />
-          </div>
-          
-          <button
-            style={{
-              fontSize: "clamp(18px, 4vw, 28px)",
-              padding: "clamp(8px, 2vh, 12px) clamp(20px, 5vw, 40px)",
-              borderRadius: 10,
-              border: "none",
-              background: "#ff4141",
-              color: "#fff",
-              fontWeight: 700,
-              cursor: "pointer",
-              marginBottom: "clamp(10px, 2vh, 20px)",
-              touchAction: "manipulation",
-            }}
-            onClick={startGame}
-          >
-            Start ({currentPlayer})
-          </button>
 
-          <button
-            style={{
-              fontSize: "clamp(16px, 3.5vw, 24px)",
-              padding: "clamp(6px, 1.5vh, 10px) clamp(15px, 4vw, 30px)",
-              borderRadius: 10,
-              border: "2px solid #4CAF50",
-              background: "transparent",
-              color: "#4CAF50",
-              fontWeight: 700,
-              cursor: "pointer",
-              marginBottom: "clamp(20px, 4vh, 40px)",
-              touchAction: "manipulation",
-            }}
-            onClick={goToStatistics}
-          >
-            📊 Statistieken ({currentPlayer})
-          </button>
+          {/* Player Selection */}
+          <div style={{
+            background: 'rgba(255,255,255,0.05)', borderRadius: 12,
+            padding: "clamp(8px, 2vw, 14px)", marginBottom: "clamp(6px, 1vh, 10px)",
+            width: '100%', maxWidth: 500, border: '1px solid rgba(255,255,255,0.1)',
+          }}>
+            <div style={{ fontSize: "clamp(13px, 2.5vw, 16px)", marginBottom: 6, fontWeight: 700, color: '#8892b0' }}>
+              Kies speler:
+            </div>
+            <div style={{ display: "flex", gap: "clamp(8px, 2vw, 14px)", justifyContent: "center", flexWrap: "wrap" }}>
+              {[
+                { name: 'Abel', emoji: '👦', color: '#FFE66D' },
+                { name: 'Elias', emoji: '👦', color: '#4ECDC4' },
+                { name: 'Floris', emoji: '👦', color: '#FF6B6B' },
+              ].map(player => (
+                <button
+                  key={player.name}
+                  className="player-btn"
+                  style={{
+                    fontSize: "clamp(14px, 3vw, 20px)",
+                    padding: "clamp(6px, 1.5vw, 10px) clamp(12px, 3vw, 20px)",
+                    borderRadius: 12, border: `3px solid ${player.color}`,
+                    background: currentPlayer === player.name
+                      ? `linear-gradient(135deg, ${player.color}, ${player.color}88)`
+                      : "rgba(255,255,255,0.05)",
+                    color: currentPlayer === player.name ? '#1a1a2e' : '#fff',
+                    fontWeight: 800, cursor: "pointer", touchAction: "manipulation",
+                  }}
+                  onClick={() => handlePlayerChange(player.name)}
+                >
+                  {player.emoji} {player.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* === TABLE SELECTION === */}
+          <div style={{
+            background: 'rgba(255,255,255,0.05)', borderRadius: 12,
+            padding: "clamp(8px, 2vw, 14px)", marginBottom: "clamp(6px, 1vh, 10px)",
+            width: '100%', maxWidth: 500, border: '1px solid rgba(255,255,255,0.1)',
+          }}>
+            <div style={{ fontSize: "clamp(13px, 2.5vw, 16px)", marginBottom: 6, fontWeight: 700, color: '#8892b0' }}>
+              Welke tafels wil je oefenen?
+            </div>
+
+            {/* Quick select buttons */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button
+                className="table-toggle"
+                onClick={selectAllTables}
+                style={{
+                  padding: '6px 14px', borderRadius: 8, border: '2px solid #4ECDC4',
+                  background: selectedTables.length === 10 ? '#4ECDC4' : 'transparent',
+                  color: selectedTables.length === 10 ? '#1a1a2e' : '#4ECDC4',
+                  fontWeight: 700, fontSize: "clamp(11px, 2.5vw, 14px)", cursor: 'pointer',
+                }}
+              >
+                Alle tafels
+              </button>
+              <button
+                className="table-toggle"
+                onClick={selectEasyTables}
+                style={{
+                  padding: '6px 14px', borderRadius: 8, border: '2px solid #FFE66D',
+                  background: JSON.stringify(selectedTables) === JSON.stringify([1,2,5,10]) ? '#FFE66D' : 'transparent',
+                  color: JSON.stringify(selectedTables) === JSON.stringify([1,2,5,10]) ? '#1a1a2e' : '#FFE66D',
+                  fontWeight: 700, fontSize: "clamp(11px, 2.5vw, 14px)", cursor: 'pointer',
+                }}
+              >
+                Makkelijk (1,2,5,10)
+              </button>
+            </div>
+
+            {/* Table toggle grid */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
+              gap: "clamp(4px, 1vw, 8px)", maxWidth: 350, margin: '0 auto',
+            }}>
+              {ALL_TABLES.map(table => {
+                const isSelected = selectedTables.includes(table);
+                const tableColors = ['#FF6B6B', '#FFA502', '#FFE66D', '#2ED573', '#4ECDC4', '#45B7D1', '#667eea', '#764ba2', '#DDA0DD', '#FF69B4'];
+                const color = tableColors[table - 1];
+                return (
+                  <button
+                    key={table}
+                    className="table-toggle"
+                    onClick={() => toggleTable(table)}
+                    style={{
+                      width: '100%', aspectRatio: '1.1',
+                      borderRadius: 10, border: `3px solid ${color}`,
+                      background: isSelected ? color : 'rgba(255,255,255,0.05)',
+                      color: isSelected ? '#1a1a2e' : color,
+                      fontWeight: 900, fontSize: "clamp(16px, 4vw, 24px)",
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontFamily: "'Fredoka One', cursive",
+                      boxShadow: isSelected ? `0 3px 12px ${color}66` : 'none',
+                      opacity: isSelected ? 1 : 0.5,
+                    }}
+                  >
+                    {table}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ textAlign: 'center', marginTop: 4, fontSize: "clamp(10px, 2vw, 12px)", color: '#8892b0' }}>
+              {selectedTables.length} tafel{selectedTables.length !== 1 ? 's' : ''} geselecteerd
+            </div>
+          </div>
+
+          {/* Settings sliders */}
+          <div style={{
+            background: 'rgba(255,255,255,0.05)', borderRadius: 12,
+            padding: "clamp(8px, 2vw, 14px)", marginBottom: "clamp(6px, 1vh, 10px)",
+            width: '100%', maxWidth: 500, border: '1px solid rgba(255,255,255,0.1)',
+          }}>
+            <div style={{ fontSize: "clamp(11px, 2.2vw, 14px)", marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>🛣️ Rijstroken: <strong>{lanes}</strong></span>
+              <input type="range" min={LANES_MIN} max={LANES_MAX} value={lanes}
+                onChange={e => setLanes(+e.target.value)}
+                style={{ width: "clamp(80px, 20vw, 120px)", accentColor: '#4ECDC4' }} />
+            </div>
+            <div style={{ fontSize: "clamp(11px, 2.2vw, 14px)", marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>💨 Snelheid: <strong>{carSpeed}</strong></span>
+              <input type="range" min={20} max={200} value={carSpeed}
+                onChange={e => setCarSpeed(+e.target.value)}
+                style={{ width: "clamp(80px, 20vw, 120px)", accentColor: '#FF6B6B' }} />
+            </div>
+            <div style={{ fontSize: "clamp(11px, 2.2vw, 14px)", display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>⏱️ Interval: <strong>{gateInterval}s</strong></span>
+              <input type="range" min={0} max={8} value={gateInterval}
+                onChange={e => setGateInterval(+e.target.value)}
+                style={{ width: "clamp(80px, 20vw, 120px)", accentColor: '#FFE66D' }} />
+            </div>
+          </div>
+
+          {/* Start + Stats buttons side by side */}
+          <div style={{ display: 'flex', gap: "clamp(8px, 2vw, 14px)", flexWrap: 'wrap', justifyContent: 'center', marginBottom: "clamp(6px, 1vh, 10px)" }}>
+            <button
+              className="start-btn"
+              style={{
+                fontSize: "clamp(18px, 4.5vw, 30px)",
+                padding: "clamp(10px, 2vh, 14px) clamp(20px, 5vw, 40px)",
+                borderRadius: 14, border: "none",
+                background: "linear-gradient(135deg, #FF6B6B, #ee5a52, #FF4757)",
+                color: "#fff", fontWeight: 700, cursor: "pointer",
+                touchAction: "manipulation",
+                boxShadow: "0 4px 20px rgba(255,75,75,0.4)",
+                fontFamily: "'Fredoka One', cursive",
+              }}
+              onClick={startGame}
+            >
+              🏁 Start Race!
+            </button>
+            <button
+              className="start-btn"
+              style={{
+                fontSize: "clamp(13px, 2.8vw, 18px)",
+                padding: "clamp(8px, 1.5vh, 12px) clamp(14px, 3.5vw, 24px)",
+                borderRadius: 14, border: "2px solid #4ECDC4",
+                background: "rgba(78, 205, 196, 0.1)",
+                color: "#4ECDC4", fontWeight: 700, cursor: "pointer",
+                touchAction: "manipulation",
+              }}
+              onClick={goToStatistics}
+            >
+              📊 Stats
+            </button>
+          </div>
 
           {/* High Score Display */}
-          <div style={{ 
-            fontSize: "clamp(16px, 3.5vw, 24px)", 
-            marginBottom: "clamp(15px, 3vh, 30px)",
-            color: "#ffd700",
-            textAlign: "center"
-          }}>
-            🏆 {currentPlayer}'s High Score: {highScore}
-          </div>
+          {highScore > 0 && (
+            <div style={{
+              fontSize: "clamp(12px, 2.5vw, 16px)", marginBottom: "clamp(4px, 1vh, 8px)",
+              color: "#ffd700", textAlign: "center", fontWeight: 700,
+            }}>
+              🏆 {currentPlayer}'s Record: {highScore}
+            </div>
+          )}
 
           {/* Recent Incorrect Answers */}
           {incorrectAnswers.length > 0 && (
             <div style={{
-              background: "rgba(255,255,255,0.1)",
-              borderRadius: 10,
-              padding: "clamp(10px, 3vw, 20px)",
-              maxWidth: "clamp(300px, 80vw, 600px)", // Responsive width
-              width: "100%",
+              background: "rgba(255,107,107,0.1)", borderRadius: 12,
+              padding: "clamp(8px, 2vw, 12px)", maxWidth: 500, width: "100%",
+              border: '1px solid rgba(255,107,107,0.2)', marginBottom: 6,
             }}>
-              <h3 style={{ 
-                fontSize: "clamp(14px, 3vw, 20px)", 
-                marginBottom: 15, 
-                color: "#ff6b6b",
-                textAlign: "center" 
-              }}>
-                {currentPlayer}'s Fouten (Laatste 10)
+              <h3 style={{ fontSize: "clamp(12px, 2.5vw, 15px)", color: "#FF6B6B", textAlign: "center", margin: '0 0 6px 0' }}>
+                Oefenpuntjes van {currentPlayer} 📝
               </h3>
-              
-              <div style={{ 
-                maxHeight: "clamp(200px, 30vh, 300px)", // Responsive height
-                overflowY: "auto",
-                fontSize: "clamp(12px, 2.5vw, 16px)",
-              }}>
-                {incorrectAnswers.map((answer, index) => (
+              <div style={{ maxHeight: "clamp(80px, 12vh, 150px)", overflowY: "auto", fontSize: "clamp(11px, 2.2vw, 14px)" }}>
+                {incorrectAnswers.map((answer) => (
                   <div key={answer.id} style={{
-                    background: "rgba(255,255,255,0.05)",
-                    margin: "5px 0",
-                    padding: "8px",
-                    borderRadius: 5,
-                    borderLeft: "3px solid #ff6b6b",
+                    background: "rgba(255,255,255,0.05)", margin: "4px 0", padding: "6px 10px",
+                    borderRadius: 8, borderLeft: "3px solid #FF6B6B",
                   }}>
                     <div style={{ fontWeight: "bold" }}>
                       {answer.question} = {answer.correctAnswer}
                     </div>
-                    <div style={{ 
-                      fontSize: "clamp(10px, 2vw, 14px)", 
-                      color: "#ffcccc",
-                      marginTop: 2 
-                    }}>
-                      Jouw antwoord: {answer.givenAnswer} | {new Date(answer.timestamp).toLocaleTimeString()}
+                    <div style={{ fontSize: "clamp(10px, 2vw, 13px)", color: "#ffaaaa", marginTop: 1 }}>
+                      Jouw antwoord: {answer.givenAnswer}
                     </div>
                   </div>
                 ))}
@@ -880,99 +874,74 @@ function TafelRaceGame() {
           {/* Pending Repeats Info */}
           {pendingRepeats.length > 0 && (
             <div style={{
-              background: "rgba(255,165,0,0.2)",
-              borderRadius: 10,
-              padding: "clamp(8px, 2vw, 15px)",
-              marginTop: "clamp(10px, 2vh, 20px)",
-              maxWidth: "clamp(300px, 80vw, 600px)",
-              width: "100%",
-              textAlign: "center",
+              background: "rgba(255,165,0,0.15)", borderRadius: 10,
+              padding: "clamp(6px, 1.5vw, 10px)", maxWidth: 500, width: "100%",
+              textAlign: "center", border: '1px solid rgba(255,165,0,0.2)',
             }}>
-              <div style={{ fontSize: "clamp(12px, 2.5vw, 16px)", color: "#ffa500" }}>
-                📝 {pendingRepeats.length} vraag{pendingRepeats.length !== 1 ? 'en' : ''} worden herhaald voor {currentPlayer}
-              </div>
-              <div style={{ fontSize: "clamp(10px, 2vw, 14px)", color: "#ffcc99", marginTop: 5 }}>
-                Foutieve antwoorden komen terug na elke {REPEAT_AFTER_QUESTIONS} vragen
+              <div style={{ fontSize: "clamp(11px, 2.2vw, 13px)", color: "#FFA502" }}>
+                📝 {pendingRepeats.length} extra oefen-vraag{pendingRepeats.length !== 1 ? 'en' : ''} voor {currentPlayer}
               </div>
             </div>
           )}
         </div>
       )}
-      
+
       {/* 3D Canvas */}
-      <Canvas camera={{ position: [0, 4.2, 12], fov: 60 }} style={{ width: "100vw", height: "100vh" }}>
-        <Sky sunPosition={[100, 20, 100]} turbidity={8} distance={450} />
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[0, 20, 10]} intensity={0.7} />
-        <OrbitControls enableZoom={false} enableRotate={false} />
-        <Road lanes={lanes} />
-        <Car
-          lane={carLane}
-          laneX={laneX}
-          lanes={lanes}
-          invincible={invincible}
+      <Canvas shadows camera={{ position: [0, 4.2, 12], fov: 60 }} style={{ width: "100vw", height: "100vh" }}>
+        <Sky sunPosition={[100, 30, 100]} turbidity={3} rayleigh={0.5} distance={450} />
+        <ambientLight intensity={0.6} color="#FFF8E7" />
+        <directionalLight
+          position={[10, 20, 10]} intensity={1.0} color="#FFFFFF"
+          castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024}
+          shadow-camera-far={200} shadow-camera-left={-30} shadow-camera-right={30}
+          shadow-camera-top={30} shadow-camera-bottom={-30}
         />
+        <directionalLight position={[-10, 10, -5]} intensity={0.2} color="#87CEEB" />
+        <hemisphereLight intensity={0.5} color="#87CEEB" groundColor="#4CAF50" />
+        <fog attach="fog" args={['#B0D4F1', 60, 180]} />
+
+        <WorldScrollUpdater phase={phase} actualCarSpeed={actualCarSpeed} />
+        <CameraController phase={phase} speedBoost={speedBoost} />
+
+        <CurvedRoad lanes={lanes} />
+        <ScrollingScenery lanes={lanes} phase={phase} actualCarSpeed={actualCarSpeed} />
+
+        <RoadFollower z={0}>
+          <Car lane={carLane} laneX={laneX} lanes={lanes} invincible={invincible} />
+        </RoadFollower>
+
         {answerBlocks.map((b) => (
-          <AnswerBlock
-            key={b.id}
-            lane={b.lane}
-            laneX={laneX}
-            z={b.z}
-            value={b.value}
-            carLane={carLane}
-          />
+          <RoadFollower key={b.id} z={b.z}>
+            <AnswerBlock lane={b.lane} laneX={laneX} z={b.z} value={b.value} carLane={carLane} />
+          </RoadFollower>
         ))}
         {obstacles.map((o) => (
-          <ObstacleCar
-            key={o.id}
-            lane={o.lane}
-            laneX={laneX}
-            z={o.z}
-            colorIndex={o.colorIndex}
-          />
+          <RoadFollower key={o.id} z={o.z}>
+            <ObstacleCar lane={o.lane} laneX={laneX} z={o.z} colorIndex={o.colorIndex} />
+          </RoadFollower>
         ))}
+
         <GameLogic
-          phase={phase}
-          carLane={carLane}
-          answerBlocks={answerBlocks}
-          setAnswerBlocks={setAnswerBlocks}
-          obstacles={obstacles}
-          setObstacles={setObstacles}
-          invincible={invincible}
-          setInvincible={setInvincible}
-          setInvStart={setInvStart}
-          invStart={invStart}
-          currentQuestion={currentQuestion}
-          setCurrentQuestion={setCurrentQuestion}
-          currentCorrect={currentCorrect}
-          setCurrentCorrect={setCurrentCorrect}
-          currentRepeatId={currentRepeatId}
-          setCurrentRepeatId={setCurrentRepeatId}
-          updateScore={updateScore}
-          setLives={setLives}
-          lives={lives}
-          setPhase={setPhase}
-          setShowGameOver={setShowGameOver}
-          lanes={lanes}
-          actualCarSpeed={actualCarSpeed}
-          blockStartZ={blockStartZ}
-          gateIntervalMs={gateIntervalMs}
-          lastGateTime={lastGateTime}
-          setLastGateTime={setLastGateTime}
-          bufferActive={bufferActive}
-          setBufferActive={setBufferActive}
-          speedBoost={speedBoost}
-          questionsAnswered={questionsAnswered}
-          setQuestionsAnswered={setQuestionsAnswered}
-          pendingRepeats={pendingRepeats}
-          setPendingRepeats={setPendingRepeats}
-          setIncorrectAnswers={setIncorrectAnswers}
-          setRedFlash={setRedFlash}
-          currentPlayer={currentPlayer}
-          setGreenFlash={setGreenFlash}
-          setShowCorrectAnswer={setShowCorrectAnswer}
-          setCorrectAnswerDisplay={setCorrectAnswerDisplay}
+          phase={phase} carLane={carLane} answerBlocks={answerBlocks} setAnswerBlocks={setAnswerBlocks}
+          obstacles={obstacles} setObstacles={setObstacles} invincible={invincible} setInvincible={setInvincible}
+          setInvStart={setInvStart} invStart={invStart} currentQuestion={currentQuestion} setCurrentQuestion={setCurrentQuestion}
+          currentCorrect={currentCorrect} setCurrentCorrect={setCurrentCorrect} currentRepeatId={currentRepeatId}
+          setCurrentRepeatId={setCurrentRepeatId} updateScore={updateScore} setLives={setLives} lives={lives}
+          setPhase={setPhase} setShowGameOver={setShowGameOver} lanes={lanes} actualCarSpeed={actualCarSpeed}
+          blockStartZ={blockStartZ} gateIntervalMs={gateIntervalMs} lastGateTime={lastGateTime}
+          setLastGateTime={setLastGateTime} bufferActive={bufferActive} setBufferActive={setBufferActive}
+          speedBoost={speedBoost} questionsAnswered={questionsAnswered} setQuestionsAnswered={setQuestionsAnswered}
+          pendingRepeats={pendingRepeats} setPendingRepeats={setPendingRepeats} setIncorrectAnswers={setIncorrectAnswers}
+          setRedFlash={setRedFlash} currentPlayer={currentPlayer} setGreenFlash={setGreenFlash}
+          setShowCorrectAnswer={setShowCorrectAnswer} setCorrectAnswerDisplay={setCorrectAnswerDisplay}
+          selectedTables={selectedTables} setShowConfetti={setShowConfetti}
+          streak={streak} setStreak={setStreak} setShowStreak={setShowStreak}
         />
+
+        <EffectComposer>
+          <Bloom luminanceThreshold={0.8} luminanceSmoothing={0.5} intensity={0.4} />
+          <Vignette eskil={false} offset={0.1} darkness={0.4} />
+        </EffectComposer>
       </Canvas>
     </div>
   );
@@ -989,7 +958,6 @@ function StatisticsPage({ currentPlayer, onBack }) {
     }
   };
 
-  // Generate all multiplication tables 1x1 to 10x10
   const generateAllQuestions = () => {
     const questions = [];
     for (let table = 1; table <= 10; table++) {
@@ -998,10 +966,7 @@ function StatisticsPage({ currentPlayer, onBack }) {
         const answer = table * multiplier;
         const stats = statistics[question] || { attempts: 0, mistakes: 0 };
         questions.push({
-          question,
-          answer,
-          attempts: stats.attempts,
-          mistakes: stats.mistakes,
+          question, answer, attempts: stats.attempts, mistakes: stats.mistakes,
           successRate: stats.attempts > 0 ? ((stats.attempts - stats.mistakes) / stats.attempts * 100).toFixed(1) : 0
         });
       }
@@ -1016,81 +981,48 @@ function StatisticsPage({ currentPlayer, onBack }) {
 
   return (
     <div style={{
-      position: "absolute",
-      top: 0,
-      left: 0,
-      width: "100vw",
-      height: "100vh",
-      background: "rgba(0,0,0,0.9)",
-      color: "#fff",
-      fontSize: "clamp(14px, 2.5vw, 16px)", // Responsive base font
-      padding: "clamp(10px, 3vw, 20px)", // Responsive padding
-      overflowY: "auto",
-      zIndex: 40,
+      position: "absolute", top: 0, left: 0, width: "100vw", height: "100vh",
+      background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)",
+      color: "#fff", fontSize: "clamp(14px, 2.5vw, 16px)",
+      padding: "clamp(10px, 3vw, 20px)", overflowY: "auto", zIndex: 40,
+      fontFamily: "'Nunito', sans-serif",
     }}>
       <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
-        {/* Header Section */}
-        <div style={{ 
-          display: "flex", 
-          justifyContent: "space-between", 
-          alignItems: "flex-start", // Changed from center for better mobile layout
-          marginBottom: "clamp(20px, 4vh, 30px)",
-          flexWrap: "wrap",
-          gap: "15px"
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+          marginBottom: "clamp(16px, 3vh, 24px)", flexWrap: "wrap", gap: "12px"
         }}>
           <div style={{ flex: "1", minWidth: "250px" }}>
-            <h1 style={{ 
-              fontSize: "clamp(24px, 6vw, 36px)", // Responsive title
-              marginBottom: "clamp(8px, 2vh, 10px)", 
-              color: "#4CAF50",
-              lineHeight: 1.2
+            <h1 style={{
+              fontSize: "clamp(22px, 5vw, 32px)", marginBottom: 6, color: "#4ECDC4",
+              lineHeight: 1.2, fontFamily: "'Fredoka One', cursive", margin: '0 0 6px 0',
             }}>
               📊 Statistieken - {currentPlayer}
             </h1>
-            <div style={{ 
-              fontSize: "clamp(14px, 3vw, 18px)", // Responsive subtitle
-              color: "#ccc",
-              lineHeight: 1.3
-            }}>
-              Totaal: {totalAttempts} pogingen | {totalMistakes} fouten | {overallSuccessRate}% correct
+            <div style={{ fontSize: "clamp(13px, 2.5vw, 16px)", color: "#8892b0" }}>
+              {totalAttempts} pogingen | {totalMistakes} fouten | {overallSuccessRate}% correct
             </div>
           </div>
-          
-          <div style={{ 
-            display: "flex", 
-            gap: "10px",
-            flexWrap: "wrap",
-            justifyContent: "flex-end"
-          }}>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button
+              className="start-btn"
               style={{
-                fontSize: "clamp(16px, 3.5vw, 20px)",
-                padding: "clamp(8px, 2vw, 10px) clamp(15px, 4vw, 25px)",
-                borderRadius: 8,
-                border: "2px solid #666",
-                background: "transparent",
-                color: "#fff",
-                fontWeight: 600,
-                cursor: "pointer",
-                touchAction: "manipulation",
-                minWidth: "80px"
+                fontSize: "clamp(14px, 3vw, 18px)", padding: "8px 18px",
+                borderRadius: 10, border: "2px solid rgba(255,255,255,0.2)",
+                background: "rgba(255,255,255,0.05)", color: "#fff",
+                fontWeight: 600, cursor: "pointer", touchAction: "manipulation",
               }}
               onClick={onBack}
             >
               ← Terug
             </button>
             <button
+              className="start-btn"
               style={{
-                fontSize: "clamp(16px, 3.5vw, 20px)",
-                padding: "clamp(8px, 2vw, 10px) clamp(15px, 4vw, 25px)",
-                borderRadius: 8,
-                border: "2px solid #ff4444",
-                background: "transparent",
-                color: "#ff4444",
-                fontWeight: 600,
-                cursor: "pointer",
-                touchAction: "manipulation",
-                minWidth: "80px"
+                fontSize: "clamp(14px, 3vw, 18px)", padding: "8px 18px",
+                borderRadius: 10, border: "2px solid rgba(255,107,107,0.5)",
+                background: "rgba(255,107,107,0.1)", color: "#FF6B6B",
+                fontWeight: 600, cursor: "pointer", touchAction: "manipulation",
               }}
               onClick={handleReset}
             >
@@ -1099,121 +1031,69 @@ function StatisticsPage({ currentPlayer, onBack }) {
           </div>
         </div>
 
-        {/* Multiplication Table Grid */}
+        {/* Grid */}
         <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(11, 1fr)", // Fixed 11 columns (header + 10 numbers)
-          gap: "1px",
-          background: "#333",
-          padding: "1px",
-          borderRadius: 8,
-          marginBottom: "clamp(15px, 3vh, 20px)",
-          fontSize: "clamp(10px, 2vw, 14px)" // Responsive grid font
+          display: "grid", gridTemplateColumns: "repeat(11, 1fr)", gap: "2px",
+          background: "rgba(255,255,255,0.1)", padding: "2px", borderRadius: 12,
+          marginBottom: 16, fontSize: "clamp(10px, 2vw, 14px)",
         }}>
-          {/* Header row */}
-          <div style={{ 
-            background: "#555", 
-            padding: "clamp(4px, 1.5vw, 8px)", 
-            fontWeight: "bold", 
-            textAlign: "center",
-            fontSize: "clamp(12px, 2.5vw, 14px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: "clamp(35px, 8vw, 60px)"
+          <div style={{ background: "rgba(255,255,255,0.15)", padding: "clamp(4px, 1.5vw, 8px)", fontWeight: "bold", textAlign: "center",
+            fontSize: "clamp(12px, 2.5vw, 14px)", display: "flex", alignItems: "center", justifyContent: "center",
+            minHeight: "clamp(35px, 8vw, 60px)", borderRadius: '10px 0 0 0',
           }}>
             ×
           </div>
-          {[1,2,3,4,5,6,7,8,9,10].map(num => (
-            <div key={num} style={{ 
-              background: "#555", 
-              padding: "clamp(4px, 1.5vw, 8px)", 
-              fontWeight: "bold", 
-              textAlign: "center",
-              fontSize: "clamp(12px, 2.5vw, 14px)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: "clamp(35px, 8vw, 60px)"
+          {[1,2,3,4,5,6,7,8,9,10].map((num, i) => (
+            <div key={num} style={{
+              background: "rgba(255,255,255,0.15)", padding: "clamp(4px, 1.5vw, 8px)", fontWeight: "bold", textAlign: "center",
+              fontSize: "clamp(12px, 2.5vw, 14px)", display: "flex", alignItems: "center", justifyContent: "center",
+              minHeight: "clamp(35px, 8vw, 60px)", borderRadius: i === 9 ? '0 10px 0 0' : 0,
             }}>
               {num}
             </div>
           ))}
 
-          {/* Table rows */}
-          {[1,2,3,4,5,6,7,8,9,10].map(table => (
+          {[1,2,3,4,5,6,7,8,9,10].map((table, ri) => (
             <React.Fragment key={table}>
-              {/* Row header */}
-              <div style={{ 
-                background: "#555", 
-                padding: "clamp(4px, 1.5vw, 8px)", 
-                fontWeight: "bold", 
-                textAlign: "center",
-                fontSize: "clamp(12px, 2.5vw, 14px)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                minHeight: "clamp(35px, 8vw, 60px)"
+              <div style={{
+                background: "rgba(255,255,255,0.15)", padding: "clamp(4px, 1.5vw, 8px)", fontWeight: "bold", textAlign: "center",
+                fontSize: "clamp(12px, 2.5vw, 14px)", display: "flex", alignItems: "center", justifyContent: "center",
+                minHeight: "clamp(35px, 8vw, 60px)",
+                borderRadius: ri === 9 ? '0 0 0 10px' : 0,
               }}>
                 {table}
               </div>
-              
-              {/* Cells */}
-              {[1,2,3,4,5,6,7,8,9,10].map(multiplier => {
+              {[1,2,3,4,5,6,7,8,9,10].map((multiplier, ci) => {
                 const question = `${table} × ${multiplier}`;
                 const stats = statistics[question] || { attempts: 0, mistakes: 0 };
                 const successRate = stats.attempts > 0 ? (stats.attempts - stats.mistakes) / stats.attempts : 1;
-                
-                let bgColor = "#222"; // Default: not attempted
+
+                let bgColor = "rgba(255,255,255,0.03)";
                 if (stats.attempts > 0) {
-                  if (successRate >= 0.9) bgColor = "#2d5a2d"; // Green: 90%+ success
-                  else if (successRate >= 0.7) bgColor = "#5a5a2d"; // Yellow: 70-89% success  
-                  else if (successRate >= 0.5) bgColor = "#5a4a2d"; // Orange: 50-69% success
-                  else bgColor = "#5a2d2d"; // Red: <50% success
+                  if (successRate >= 0.9) bgColor = "rgba(46, 213, 115, 0.3)";
+                  else if (successRate >= 0.7) bgColor = "rgba(255, 230, 77, 0.25)";
+                  else if (successRate >= 0.5) bgColor = "rgba(255, 165, 2, 0.25)";
+                  else bgColor = "rgba(255, 107, 107, 0.3)";
                 }
 
                 return (
-                  <div 
-                    key={multiplier}
-                    style={{ 
-                      background: bgColor,
-                      padding: "clamp(2px, 1vw, 4px)",
-                      textAlign: "center",
-                      fontSize: "clamp(10px, 2vw, 12px)",
-                      lineHeight: 1.1,
-                      minHeight: "clamp(35px, 8vw, 60px)",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      cursor: "pointer"
-                    }}
-                    title={`${question} = ${table * multiplier}\nPogingen: ${stats.attempts}\nFouten: ${stats.mistakes}\nSucces: ${stats.attempts > 0 ? (successRate * 100).toFixed(1) : 0}%`}
+                  <div key={multiplier} style={{
+                    background: bgColor, padding: "clamp(2px, 1vw, 4px)", textAlign: "center",
+                    fontSize: "clamp(10px, 2vw, 12px)", lineHeight: 1.1,
+                    minHeight: "clamp(35px, 8vw, 60px)", display: "flex", flexDirection: "column",
+                    justifyContent: "center", alignItems: "center",
+                    borderRadius: (ri === 9 && ci === 9) ? '0 0 10px 0' : 0,
+                  }}
+                    title={`${question} = ${table * multiplier}\nPogingen: ${stats.attempts}\nFouten: ${stats.mistakes}`}
                   >
-                    <div style={{ 
-                      fontWeight: "bold", 
-                      fontSize: "clamp(11px, 2.2vw, 14px)",
-                      marginBottom: stats.attempts > 0 ? "1px" : "0"
-                    }}>
+                    <div style={{ fontWeight: "bold", fontSize: "clamp(11px, 2.2vw, 14px)" }}>
                       {table * multiplier}
                     </div>
                     {stats.attempts > 0 && (
                       <>
-                        <div style={{ 
-                          fontSize: "clamp(8px, 1.5vw, 10px)", 
-                          color: "#ccc",
-                          lineHeight: 1
-                        }}>
-                          {stats.attempts}×
-                        </div>
+                        <div style={{ fontSize: "clamp(8px, 1.5vw, 10px)", color: "#aaa" }}>{stats.attempts}×</div>
                         {stats.mistakes > 0 && (
-                          <div style={{ 
-                            fontSize: "clamp(8px, 1.5vw, 10px)", 
-                            color: "#ff6666",
-                            lineHeight: 1
-                          }}>
-                            {stats.mistakes}✗
-                          </div>
+                          <div style={{ fontSize: "clamp(8px, 1.5vw, 10px)", color: "#FF6B6B" }}>{stats.mistakes}✗</div>
                         )}
                       </>
                     )}
@@ -1225,70 +1105,25 @@ function StatisticsPage({ currentPlayer, onBack }) {
         </div>
 
         {/* Legend */}
-        <div style={{ 
-          marginTop: "clamp(15px, 3vh, 20px)", 
-          padding: "clamp(12px, 3vw, 15px)", 
-          background: "rgba(255,255,255,0.1)", 
-          borderRadius: 8,
-          fontSize: "clamp(12px, 2.5vw, 14px)"
+        <div style={{
+          padding: "clamp(10px, 2.5vw, 14px)", background: "rgba(255,255,255,0.05)",
+          borderRadius: 12, fontSize: "clamp(12px, 2.5vw, 14px)",
+          border: '1px solid rgba(255,255,255,0.1)',
         }}>
-          <strong style={{ fontSize: "clamp(14px, 3vw, 16px)" }}>Legenda:</strong>
-          <div style={{ 
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", // Responsive grid
-            gap: "clamp(10px, 2vw, 20px)", 
-            marginTop: "clamp(8px, 2vw, 12px)"
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ 
-                width: "clamp(16px, 4vw, 20px)", 
-                height: "clamp(16px, 4vw, 20px)", 
-                background: "#222", 
-                borderRadius: 3,
-                flexShrink: 0
-              }}></div>
-              <span>Niet geprobeerd</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ 
-                width: "clamp(16px, 4vw, 20px)", 
-                height: "clamp(16px, 4vw, 20px)", 
-                background: "#2d5a2d", 
-                borderRadius: 3,
-                flexShrink: 0
-              }}></div>
-              <span>90%+ correct</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ 
-                width: "clamp(16px, 4vw, 20px)", 
-                height: "clamp(16px, 4vw, 20px)", 
-                background: "#5a5a2d", 
-                borderRadius: 3,
-                flexShrink: 0
-              }}></div>
-              <span>70-89% correct</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ 
-                width: "clamp(16px, 4vw, 20px)", 
-                height: "clamp(16px, 4vw, 20px)", 
-                background: "#5a4a2d", 
-                borderRadius: 3,
-                flexShrink: 0
-              }}></div>
-              <span>50-69% correct</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ 
-                width: "clamp(16px, 4vw, 20px)", 
-                height: "clamp(16px, 4vw, 20px)", 
-                background: "#5a2d2d", 
-                borderRadius: 3,
-                flexShrink: 0
-              }}></div>
-              <span>&lt;50% correct</span>
-            </div>
+          <strong>Legenda:</strong>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginTop: 8 }}>
+            {[
+              { color: "rgba(255,255,255,0.03)", label: "Niet geprobeerd" },
+              { color: "rgba(46, 213, 115, 0.3)", label: "90%+ correct" },
+              { color: "rgba(255, 230, 77, 0.25)", label: "70-89% correct" },
+              { color: "rgba(255, 165, 2, 0.25)", label: "50-69% correct" },
+              { color: "rgba(255, 107, 107, 0.3)", label: "<50% correct" },
+            ].map(item => (
+              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 18, height: 18, background: item.color, borderRadius: 4, border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }} />
+                <span>{item.label}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -1302,43 +1137,46 @@ function GameLogic({
   invincible, setInvincible, setInvStart, invStart, currentQuestion, setCurrentQuestion,
   currentCorrect, setCurrentCorrect, currentRepeatId, setCurrentRepeatId, updateScore, setLives, lives, setPhase,
   setShowGameOver, lanes, actualCarSpeed, blockStartZ, gateIntervalMs,
-  lastGateTime, setLastGateTime, bufferActive, setBufferActive, bufferTime,
+  lastGateTime, setLastGateTime, bufferActive, setBufferActive,
   speedBoost, questionsAnswered, setQuestionsAnswered, pendingRepeats, setPendingRepeats,
-  setIncorrectAnswers, setRedFlash, currentPlayer, setGreenFlash, setShowCorrectAnswer, setCorrectAnswerDisplay
+  setIncorrectAnswers, setRedFlash, currentPlayer, setGreenFlash, setShowCorrectAnswer, setCorrectAnswerDisplay,
+  selectedTables, setShowConfetti, streak, setStreak, setShowStreak
 }) {
-  const lastObstacleSpawnTimeRef = useRef(0); // Track last obstacle spawn time
+  const lastObstacleSpawnTimeRef = useRef(0);
+  const bufferTime = 2000;
 
   useFrame(() => {
     if (phase !== "play") return;
-
     const now = Date.now();
 
-    // Move answer blocks
     setAnswerBlocks((blocks) =>
-      blocks
-        .map((b) => ({ ...b, z: b.z + actualCarSpeed }))
-        .filter((b) => b.z < 2)
+      blocks.map((b) => ({ ...b, z: b.z + actualCarSpeed })).filter((b) => b.z < 2)
     );
 
-    // Check collision with answer blocks
     answerBlocks.forEach((b) => {
-      if (
-        Math.abs(b.z) < 1.2 &&
-        b.lane === carLane &&
-        !invincible
-      ) {
+      if (Math.abs(b.z) < 1.2 && b.lane === carLane && !invincible) {
         if (b.value === currentCorrect) {
           updateScore(questionsAnswered + 1);
           setQuestionsAnswered(q => q + 1);
-          
-          // Update statistics for correct answer
           updateStatistics(currentQuestion, true, currentPlayer);
-          
-          // Flash green screen for 200ms
+
+          // Streak tracking
+          setStreak(s => {
+            const newStreak = s + 1;
+            if (newStreak >= 3) {
+              setShowStreak(true);
+              setTimeout(() => setShowStreak(false), 1200);
+            }
+            if (newStreak >= 5 && newStreak % 5 === 0) {
+              setShowConfetti(true);
+              setTimeout(() => setShowConfetti(false), 2000);
+            }
+            return newStreak;
+          });
+
           setGreenFlash(true);
           setTimeout(() => setGreenFlash(false), 200);
-          
-          // Remove from pending repeats if this was a repeat question
+
           if (currentRepeatId) {
             removePendingRepeat(currentRepeatId, currentPlayer);
             setPendingRepeats(getPendingRepeats(currentPlayer));
@@ -1347,34 +1185,26 @@ function GameLogic({
           setLives((l) => l - 1);
           setInvincible(true);
           setInvStart(now);
-          
-          // Update statistics for incorrect answer
+          setStreak(0);
+
           updateStatistics(currentQuestion, false, currentPlayer);
-          
-          // Flash red screen for 200ms
+
           setRedFlash(true);
           setTimeout(() => setRedFlash(false), 200);
-          
-          // Show correct answer for 1 second
-          setCorrectAnswerDisplay({
-            question: currentQuestion,
-            answer: currentCorrect
-          });
+
+          setCorrectAnswerDisplay({ question: currentQuestion, answer: currentCorrect });
           setShowCorrectAnswer(true);
-          setTimeout(() => setShowCorrectAnswer(false), 1000);
-          
-          // Track incorrect answer for current player
+          setTimeout(() => setShowCorrectAnswer(false), 1500);
+
           addIncorrectAnswer(currentQuestion, currentCorrect, b.value, currentPlayer);
           setIncorrectAnswers(getIncorrectAnswers(currentPlayer));
-          
-          // Add to pending repeats (only if not already a repeat)
+
           if (!currentRepeatId) {
             addPendingRepeat(currentQuestion, currentCorrect, currentPlayer);
             setPendingRepeats(getPendingRepeats(currentPlayer));
           }
         }
-        
-        // Remove the entire gate set and clear question
+
         setAnswerBlocks([]);
         setCurrentQuestion(null);
         setCurrentCorrect(null);
@@ -1382,194 +1212,126 @@ function GameLogic({
       }
     });
 
-    // Clear question when all gates have passed without collision
     if (answerBlocks.length > 0 && answerBlocks.every(b => b.z > 2)) {
       setCurrentQuestion(null);
       setCurrentCorrect(null);
       setCurrentRepeatId(null);
     }
 
-    // Move obstacles
     setObstacles((obs) =>
-      obs
-        .map((o) => ({ ...o, z: o.z + actualCarSpeed }))
-        .filter((o) => o.z < 2)
+      obs.map((o) => ({ ...o, z: o.z + actualCarSpeed })).filter((o) => o.z < 2)
     );
 
-    // Check collision with obstacles
     obstacles.forEach((o) => {
-      if (
-        Math.abs(o.z) < 1.2 &&
-        o.lane === carLane &&
-        !invincible
-      ) {
-        // Check if there's a gate in the same lane and we're within protection window
+      if (Math.abs(o.z) < 1.2 && o.lane === carLane && !invincible) {
         const gateInSameLane = answerBlocks.find(gate => gate.lane === carLane);
-        const protectionTime = 2000; // 2 seconds in milliseconds
-        const protectionDistance = actualCarSpeed * protectionTime / 16.67; // Convert to distance
-        
+        const protectionTime = 2000;
+        const protectionDistance = actualCarSpeed * protectionTime / 16.67;
+
         let isProtected = false;
         if (gateInSameLane) {
           const distanceToGate = Math.abs(gateInSameLane.z);
-          if (distanceToGate <= protectionDistance) {
-            isProtected = true;
-            console.log(`Traffic collision protected: gate distance=${distanceToGate.toFixed(2)}, protection=${protectionDistance.toFixed(2)}`);
-          }
+          if (distanceToGate <= protectionDistance) isProtected = true;
         }
-        
+
         if (!isProtected) {
           setLives((l) => l - 1);
           setInvincible(true);
           setInvStart(now);
-          
-          // Flash red screen for 200ms (0.2 seconds)
+          setStreak(0);
           setRedFlash(true);
           setTimeout(() => setRedFlash(false), 200);
         }
-        
+
         setObstacles((obs) => obs.filter((obstacle) => obstacle.id !== o.id));
       }
     });
 
-    // Invincibility timer
     if (invincible && now - invStart > INVINCIBILITY_TIME) {
       setInvincible(false);
     }
 
-    // Game over
     if (lives <= 0 && phase === "play") {
       setPhase("gameover");
       setShowGameOver(true);
     }
   });
 
-  // Spawn new gates when no gates are active
+  // Spawn new gates
   useEffect(() => {
     if (phase !== "play") return;
-    
-    const effectiveInterval = Math.max(gateIntervalMs, 100); // Minimum 100ms to prevent issues
-    
+    const effectiveInterval = Math.max(gateIntervalMs, 100);
     const t = setInterval(() => {
-      // Only spawn new gates if no active gates exist
       if (answerBlocks.length === 0) {
-        const [q, c, opts, repeatId] = generateQuestion(lanes, questionsAnswered, getPendingRepeats(currentPlayer));
+        const [q, c, opts, repeatId] = generateQuestion(lanes, questionsAnswered, getPendingRepeats(currentPlayer), selectedTables);
         setCurrentQuestion(q);
         setCurrentCorrect(c);
         setCurrentRepeatId(repeatId);
-        
-        const newBlocks = opts.map((opt, i) => ({
-          lane: i,
-          z: blockStartZ, // Now spawns at -100 (top of screen)
-          value: opt,
+        setAnswerBlocks(opts.map((opt, i) => ({
+          lane: i, z: blockStartZ, value: opt,
           id: Math.random().toString(36).slice(2),
           questionId: Date.now().toString(),
-        }));
-        
-        setAnswerBlocks(newBlocks);
+        })));
         setLastGateTime(Date.now());
-        console.log(`Spawned new gates at z=${blockStartZ}`);
       }
     }, effectiveInterval);
-    
     return () => clearInterval(t);
-  }, [phase, lanes, gateIntervalMs, blockStartZ, answerBlocks.length, questionsAnswered, currentPlayer]);
+  }, [phase, lanes, gateIntervalMs, blockStartZ, answerBlocks.length, questionsAnswered, currentPlayer, selectedTables]);
 
-  // Improved obstacle spawning with proper timing and location controls
+  // Obstacle spawning
   useEffect(() => {
     if (phase !== "play") return;
-    
     const maxTrafficCars = Math.max(1, Math.floor(lanes / 2));
-    const OBSTACLE_SPAWN_INTERVAL = 2500; // How often we check for spawning
-    const OBSTACLE_SPAWN_Z = blockStartZ; // Spawn at same location as gates
-    const OBSTACLE_RATE_COOLDOWN = 2000; // Min 2 seconds between obstacle spawns
-    const GATE_SPAWN_BUFFER = 2000; // Don't spawn obstacles 2s before/after gates
-    
+    const OBSTACLE_SPAWN_INTERVAL = 2500;
+    const OBSTACLE_SPAWN_Z = blockStartZ;
+    const OBSTACLE_RATE_COOLDOWN = 2000;
+    const GATE_SPAWN_BUFFER = 2000;
+
     const t = setInterval(() => {
       const now = Date.now();
-      
-      // 1. Rate Limit: Check if 2 seconds have passed since the last obstacle spawn
-      if (now - lastObstacleSpawnTimeRef.current < OBSTACLE_RATE_COOLDOWN) {
-        return;
-      }
-      
-      // 2. Gate Proximity: Check if too close to a gate spawn event
-      // Rule 2a: Too soon after the last gate set spawned
-      if (now - lastGateTime < GATE_SPAWN_BUFFER) {
-        return;
-      }
-      
-      // Rule 2b: Too soon before an imminently spawning gate set
-      // If no answer blocks are on screen, new gates are due based on gateIntervalMs
+      if (now - lastObstacleSpawnTimeRef.current < OBSTACLE_RATE_COOLDOWN) return;
+      if (now - lastGateTime < GATE_SPAWN_BUFFER) return;
+
       const effectiveGateSpawnInterval = Math.max(gateIntervalMs, 100);
-      if (answerBlocks.length === 0 && effectiveGateSpawnInterval < GATE_SPAWN_BUFFER) {
-        return;
-      }
-      
+      if (answerBlocks.length === 0 && effectiveGateSpawnInterval < GATE_SPAWN_BUFFER) return;
+
       setObstacles((currentObs) => {
-        // 3. Max Traffic: Check if max number of obstacles already on screen
         const activeCars = currentObs.filter((o) => o.z > OBSTACLE_SPAWN_Z - 50).length;
-        if (activeCars >= maxTrafficCars) {
-          return currentObs;
-        }
-        
-        // 4. Lane Availability: Find lanes not occupied by other obstacles at spawn location
+        if (activeCars >= maxTrafficCars) return currentObs;
+
         const availableLanes = [];
         for (let lane = 0; lane < lanes; lane++) {
-          const isLaneOccupiedByObstacle = currentObs.some(
-            (obstacle) =>
-              obstacle.lane === lane &&
-              Math.abs(obstacle.z - OBSTACLE_SPAWN_Z) < CAR_LENGTH * 3 // Check 3 car lengths for spacing
-          );
-          if (!isLaneOccupiedByObstacle) {
-            availableLanes.push(lane);
-          }
+          const occupied = currentObs.some(o => o.lane === lane && Math.abs(o.z - OBSTACLE_SPAWN_Z) < CAR_LENGTH * 3);
+          if (!occupied) availableLanes.push(lane);
         }
-        
+
         if (availableLanes.length > 0) {
           const selectedLane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
-          lastObstacleSpawnTimeRef.current = now; // Update last spawn time
-          
-          return [
-            ...currentObs,
-            {
-              lane: selectedLane,
-              z: OBSTACLE_SPAWN_Z,
-              id: Math.random().toString(36).slice(2),
-              colorIndex: currentObs.length % 5,
-            },
-          ];
+          lastObstacleSpawnTimeRef.current = now;
+          return [...currentObs, {
+            lane: selectedLane, z: OBSTACLE_SPAWN_Z,
+            id: Math.random().toString(36).slice(2),
+            colorIndex: currentObs.length % 7,
+          }];
         }
         return currentObs;
       });
     }, OBSTACLE_SPAWN_INTERVAL);
-    
     return () => clearInterval(t);
   }, [phase, lanes, blockStartZ, gateIntervalMs, lastGateTime, answerBlocks.length]);
 
-  // Buffer management around gates
+  // Buffer management
   useEffect(() => {
     if (phase !== "play") return;
-    
     const checkBuffer = () => {
-      const approachingGates = answerBlocks.filter((b) => 
-        b.z > -30 && b.z < 10
-      );
-      
-      if (approachingGates.length > 0 && !bufferActive) {
+      const approaching = answerBlocks.filter((b) => b.z > -30 && b.z < 10);
+      if (approaching.length > 0 && !bufferActive) {
         setBufferActive(true);
-        
-        const closestGate = approachingGates.reduce((closest, gate) => 
-          Math.abs(gate.z) < Math.abs(closest.z) ? gate : closest
-        );
-        
-        const timeToReach = Math.abs(closestGate.z) / actualCarSpeed * 16.67;
-        
-        setTimeout(() => {
-          setBufferActive(false);
-        }, timeToReach + bufferTime);
+        const closest = approaching.reduce((c, g) => Math.abs(g.z) < Math.abs(c.z) ? g : c);
+        const timeToReach = Math.abs(closest.z) / actualCarSpeed * 16.67;
+        setTimeout(() => setBufferActive(false), timeToReach + bufferTime);
       }
     };
-    
     const interval = setInterval(checkBuffer, 500);
     return () => clearInterval(interval);
   }, [answerBlocks, bufferActive, actualCarSpeed, bufferTime]);
@@ -1577,39 +1339,478 @@ function GameLogic({
   return null;
 }
 
-// --- Road Component ---
-function Road({ lanes }) {
+// --- Road Component (improved) ---
+// --- Camera Controller: height variation + curves ---
+// --- Updates the module-level worldScroll every frame ---
+function WorldScrollUpdater({ phase, actualCarSpeed }) {
+  useFrame(() => {
+    if (phase === "play") {
+      worldScroll += actualCarSpeed * 15;
+    }
+  });
+  return null;
+}
+
+// --- Camera follows road offset at car position (z=0), very subtle ---
+function CameraController({ phase, speedBoost }) {
+  const { camera } = useThree();
+
+  useFrame(() => {
+    if (phase === "play") {
+      const offset = getRoadOffset(0);
+      // Camera follows road curve smoothly with slight lag
+      camera.position.x += (offset.x - camera.position.x) * 0.04;
+      camera.position.y += (4.2 + offset.y - camera.position.y) * 0.04;
+      camera.position.z = 12;
+
+      // Subtle tilt in curves
+      const targetTilt = -offset.x * 0.008;
+      camera.rotation.z += (targetTilt - camera.rotation.z) * 0.05;
+
+      // Speed shake
+      if (speedBoost) {
+        camera.position.x += Math.sin(Date.now() * 0.05) * 0.03;
+        camera.position.y += Math.sin(Date.now() * 0.07) * 0.02;
+      }
+    } else {
+      camera.position.set(0, 4.2, 12);
+      camera.rotation.z = 0;
+    }
+  });
+
+  return null;
+}
+
+// --- RoadFollower: offsets children to follow road curve at given z ---
+function RoadFollower({ z, children }) {
+  const groupRef = useRef();
+
+  useFrame(() => {
+    if (groupRef.current) {
+      const offset = getRoadOffset(z);
+      groupRef.current.position.x = offset.x;
+      groupRef.current.position.y = offset.y;
+    }
+  });
+
+  return <group ref={groupRef}>{children}</group>;
+}
+
+// --- Road with scrolling lane markings ---
+// --- Curved Road: segments that follow getRoadOffset ---
+function CurvedRoad({ lanes }) {
+  const roadWidth = lanes * 2.5 + 2;
+  const roadHalf = roadWidth / 2;
+  const segmentLength = 3;
+  const segmentCount = 70;
+  const startZ = 10;
+
+  // Refs for each road segment group
+  const segmentRefs = useRef([]);
+  const curbRefs = useRef({ left: [], right: [] });
+  const dashRefs = useRef([]);
+
+  // Update segment positions every frame to follow road curve
+  useFrame(() => {
+    for (let i = 0; i < segmentCount; i++) {
+      const z = startZ - i * segmentLength;
+      const offset = getRoadOffset(z);
+      const ref = segmentRefs.current[i];
+      if (ref) {
+        ref.position.x = offset.x;
+        ref.position.y = offset.y - 0.4;
+        ref.position.z = z;
+      }
+    }
+    // Curb segments
+    for (let i = 0; i < segmentCount; i++) {
+      const z = startZ - i * segmentLength;
+      const offset = getRoadOffset(z);
+      if (curbRefs.current.left[i]) {
+        curbRefs.current.left[i].position.set(offset.x - roadHalf + 0.15, offset.y - 0.28, z);
+      }
+      if (curbRefs.current.right[i]) {
+        curbRefs.current.right[i].position.set(offset.x + roadHalf - 0.15, offset.y - 0.28, z);
+      }
+    }
+    // Lane dash segments
+    for (let d = 0; d < dashRefs.current.length; d++) {
+      const ref = dashRefs.current[d];
+      if (ref && ref.userData) {
+        const z = ref.userData.z;
+        const offset = getRoadOffset(z);
+        ref.position.x = offset.x + ref.userData.laneX;
+        ref.position.y = offset.y - 0.23;
+        ref.position.z = z;
+      }
+    }
+  });
+
+  // Build lane dash list
+  const dashes = useMemo(() => {
+    const result = [];
+    for (let lane = 0; lane < lanes - 1; lane++) {
+      const lx = (lane - (lanes - 2) / 2) * 2.5;
+      for (let j = 0; j < 40; j++) {
+        result.push({ laneX: lx, z: startZ - j * 5, id: `d${lane}_${j}` });
+      }
+    }
+    return result;
+  }, [lanes]);
+
   return (
     <group>
-      {/* Road base - positioned lower and extended to reach 80% screen height */}
-      <mesh position={[0, -0.4, -90]} receiveShadow>
-        <boxGeometry args={[lanes * 2.5 + 2, 0.3, 220]} />
-        <meshStandardMaterial color={ROAD_COLOR} />
-      </mesh>
-      {/* Lane separator lines - adjusted for new positioning */}
-      {Array.from({ length: lanes - 1 }).map((_, i) => (
-        <mesh key={i} position={[(i - (lanes - 2) / 2) * 2.5, -0.249, -90]}>
-          <boxGeometry args={[0.05, 0.01, 220]} />
-          <meshStandardMaterial color="#fff" />
+      {/* Road segments */}
+      {Array.from({ length: segmentCount }).map((_, i) => (
+        <mesh
+          key={`seg${i}`}
+          ref={el => segmentRefs.current[i] = el}
+          receiveShadow
+        >
+          <boxGeometry args={[roadWidth, 0.3, segmentLength + 0.1]} />
+          <meshStandardMaterial color={i % 2 === 0 ? "#505050" : "#484848"} />
         </mesh>
       ))}
+
+      {/* Curb segments - left */}
+      {Array.from({ length: segmentCount }).map((_, i) => (
+        <mesh
+          key={`cl${i}`}
+          ref={el => curbRefs.current.left[i] = el}
+        >
+          <boxGeometry args={[0.3, 0.2, segmentLength + 0.1]} />
+          <meshStandardMaterial color={i % 2 === 0 ? "#FF4757" : "#FFFFFF"} />
+        </mesh>
+      ))}
+
+      {/* Curb segments - right */}
+      {Array.from({ length: segmentCount }).map((_, i) => (
+        <mesh
+          key={`cr${i}`}
+          ref={el => curbRefs.current.right[i] = el}
+        >
+          <boxGeometry args={[0.3, 0.2, segmentLength + 0.1]} />
+          <meshStandardMaterial color={i % 2 === 0 ? "#FF4757" : "#FFFFFF"} />
+        </mesh>
+      ))}
+
+      {/* Lane dashes */}
+      {dashes.map((d, idx) => (
+        <mesh
+          key={d.id}
+          ref={el => {
+            if (el) { el.userData = { laneX: d.laneX, z: d.z }; }
+            dashRefs.current[idx] = el;
+          }}
+        >
+          <boxGeometry args={[0.08, 0.01, 2]} />
+          <meshStandardMaterial color="#FFFFFF" emissive="#FFFFFF" emissiveIntensity={0.15} />
+        </mesh>
+      ))}
+
+      {/* Grass on sides - large flat planes (static, far enough to not notice curve) */}
+      <mesh position={[-(roadHalf + 20), -0.6, -90]} receiveShadow>
+        <boxGeometry args={[40, 0.2, 240]} />
+        <meshStandardMaterial color="#4CAF50" />
+      </mesh>
+      <mesh position={[(roadHalf + 20), -0.6, -90]} receiveShadow>
+        <boxGeometry args={[40, 0.2, 240]} />
+        <meshStandardMaterial color="#4CAF50" />
+      </mesh>
     </group>
   );
 }
 
-// --- Answer Block Component ---
-function AnswerBlock({ lane, laneX, z, value, carLane }) {
-  // Hide label if block is in front of car (z between -2 and 2) and in same lane
-  const hideLabel = z > -2 && z < 2 && lane === carLane;
-  
+// --- Scrolling Scenery: everything moves to create driving feeling ---
+function ScrollingScenery({ lanes, phase, actualCarSpeed }) {
+  const groupRef = useRef();
+  const scrollOffset = useRef(0);
+  const roadEdge = (lanes * 2.5 + 2) / 2 + 2;
+  const LOOP_LENGTH = 200; // scenery loops every 200 units
+
+  // Deterministic pseudo-random using seed
+  const seededRandom = (seed) => {
+    const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return x - Math.floor(x);
+  };
+
+  // Generate all scenery items with deterministic positions
+  const sceneryItems = useMemo(() => {
+    const trees = [];
+    for (let i = 0; i < 40; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      trees.push({
+        x: side * (roadEdge + 1 + seededRandom(i * 7 + 1) * 8),
+        zBase: (i / 40) * LOOP_LENGTH,
+        scale: 0.7 + seededRandom(i * 3 + 5) * 0.6,
+        type: Math.floor(seededRandom(i * 11 + 3) * 3),
+        id: `t${i}`,
+      });
+    }
+
+    const flowers = [];
+    for (let i = 0; i < 50; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const colors = ['#FF6B6B', '#FFE66D', '#DDA0DD', '#FF69B4', '#FFA07A', '#87CEEB'];
+      flowers.push({
+        x: side * (roadEdge + 0.5 + seededRandom(i * 13 + 7) * 10),
+        zBase: (i / 50) * LOOP_LENGTH,
+        color: colors[Math.floor(seededRandom(i * 17 + 2) * 6)],
+        id: `f${i}`,
+      });
+    }
+
+    const hills = [];
+    for (let i = 0; i < 16; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      hills.push({
+        x: side * (roadEdge + 5 + seededRandom(i * 19 + 4) * 12),
+        zBase: (i / 16) * LOOP_LENGTH,
+        scaleX: 4 + seededRandom(i * 23 + 1) * 6,
+        scaleY: 1.5 + seededRandom(i * 29 + 3) * 2.5,
+        scaleZ: 4 + seededRandom(i * 31 + 2) * 5,
+        shade: i % 3,
+        id: `h${i}`,
+      });
+    }
+
+    const mountains = [];
+    for (let i = 0; i < 10; i++) {
+      mountains.push({
+        x: -50 + seededRandom(i * 37 + 11) * 100,
+        zBase: (i / 10) * LOOP_LENGTH,
+        height: 8 + seededRandom(i * 41 + 7) * 12,
+        width: 6 + seededRandom(i * 43 + 5) * 8,
+        id: `m${i}`,
+      });
+    }
+
+    const clouds = [];
+    for (let i = 0; i < 10; i++) {
+      clouds.push({
+        x: -30 + seededRandom(i * 47 + 3) * 60,
+        y: 8 + seededRandom(i * 53 + 1) * 5,
+        zBase: (i / 10) * LOOP_LENGTH,
+        id: `c${i}`,
+      });
+    }
+
+    return { trees, flowers, hills, mountains, clouds };
+  }, [roadEdge]);
+
+  // Wrap z position into visible range - items scroll TOWARD player (+z)
+  const wrapZ = (zBase) => {
+    let z = zBase + (scrollOffset.current % LOOP_LENGTH);
+    if (z > LOOP_LENGTH / 2) z -= LOOP_LENGTH;
+    if (z < -LOOP_LENGTH / 2) z += LOOP_LENGTH;
+    return z - 80; // offset to center view
+  };
+
+  useFrame(() => {
+    if (phase === "play") {
+      scrollOffset.current += actualCarSpeed * 15;
+    }
+  });
+
   return (
-    <group position={[laneX(lane), 0.1, z]}>
+    <group ref={groupRef}>
+      {/* Mountains (scroll slowly for parallax) */}
+      {sceneryItems.mountains.map(m => {
+        const z = wrapZ(m.zBase) * 0.3 - 60; // slower parallax
+        return (
+          <group key={m.id} position={[m.x, -0.5, z]}>
+            <mesh position={[0, m.height / 2, 0]} castShadow>
+              <coneGeometry args={[m.width, m.height, 6]} />
+              <meshStandardMaterial color="#6B7B8D" />
+            </mesh>
+            {m.height > 14 && (
+              <mesh position={[0, m.height * 0.75, 0]}>
+                <coneGeometry args={[m.width * 0.35, m.height * 0.3, 6]} />
+                <meshStandardMaterial color="#E8EAF0" />
+              </mesh>
+            )}
+            <mesh position={[m.width * 0.6, m.height * 0.3, m.width * 0.3]}>
+              <coneGeometry args={[m.width * 0.5, m.height * 0.6, 5]} />
+              <meshStandardMaterial color="#7B8D9E" />
+            </mesh>
+          </group>
+        );
+      })}
+
+      {/* Hills */}
+      {sceneryItems.hills.map(h => {
+        const z = wrapZ(h.zBase);
+        const roadOff = getRoadOffset(z);
+        return (
+          <mesh key={h.id} position={[h.x + roadOff.x, -0.5 + roadOff.y, z]} scale={[h.scaleX, h.scaleY, h.scaleZ]}>
+            <sphereGeometry args={[1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial color={h.shade === 0 ? '#4CAF50' : h.shade === 1 ? '#43A047' : '#388E3C'} />
+          </mesh>
+        );
+      })}
+
+      {/* Trees */}
+      {sceneryItems.trees.map(tree => {
+        const z = wrapZ(tree.zBase);
+        const roadOff = getRoadOffset(z);
+        return (
+          <group key={tree.id} position={[tree.x + roadOff.x, -0.4 + roadOff.y, z]} scale={tree.scale} castShadow>
+            <mesh position={[0, 0.8, 0]} castShadow>
+              <cylinderGeometry args={[0.15, 0.2, 1.6, 8]} />
+              <meshStandardMaterial color="#8B4513" />
+            </mesh>
+
+            {tree.type === 0 && (
+              <>
+                <mesh position={[0, 2.0, 0]} castShadow>
+                  <sphereGeometry args={[0.9, 12, 12]} />
+                  <meshStandardMaterial color="#2ECC71" />
+                </mesh>
+                <mesh position={[0.3, 2.3, 0.2]}>
+                  <sphereGeometry args={[0.5, 10, 10]} />
+                  <meshStandardMaterial color="#27AE60" />
+                </mesh>
+              </>
+            )}
+
+            {tree.type === 1 && (
+              <>
+                <mesh position={[0, 2.2, 0]} castShadow>
+                  <coneGeometry args={[0.8, 1.8, 8]} />
+                  <meshStandardMaterial color="#27AE60" />
+                </mesh>
+                <mesh position={[0, 3.0, 0]}>
+                  <coneGeometry args={[0.6, 1.3, 8]} />
+                  <meshStandardMaterial color="#2ECC71" />
+                </mesh>
+                <mesh position={[0, 3.6, 0]}>
+                  <coneGeometry args={[0.35, 0.9, 8]} />
+                  <meshStandardMaterial color="#58D68D" />
+                </mesh>
+              </>
+            )}
+
+            {tree.type === 2 && (
+              <>
+                <mesh position={[-0.3, 1.8, 0]} castShadow>
+                  <sphereGeometry args={[0.6, 10, 10]} />
+                  <meshStandardMaterial color="#2ECC71" />
+                </mesh>
+                <mesh position={[0.3, 1.9, 0.2]}>
+                  <sphereGeometry args={[0.65, 10, 10]} />
+                  <meshStandardMaterial color="#27AE60" />
+                </mesh>
+                <mesh position={[0, 2.3, -0.1]}>
+                  <sphereGeometry args={[0.55, 10, 10]} />
+                  <meshStandardMaterial color="#58D68D" />
+                </mesh>
+              </>
+            )}
+          </group>
+        );
+      })}
+
+      {/* Flowers */}
+      {sceneryItems.flowers.map(flower => {
+        const z = wrapZ(flower.zBase);
+        return (
+          <group key={flower.id} position={[flower.x + getRoadOffset(z).x, -0.35 + getRoadOffset(z).y, z]}>
+            <mesh position={[0, 0.15, 0]}>
+              <sphereGeometry args={[0.12, 8, 8]} />
+              <meshStandardMaterial color={flower.color} />
+            </mesh>
+            <mesh position={[0, 0.05, 0]}>
+              <cylinderGeometry args={[0.02, 0.02, 0.15, 4]} />
+              <meshStandardMaterial color="#27AE60" />
+            </mesh>
+          </group>
+        );
+      })}
+
+      {/* Clouds (very slow parallax) */}
+      {sceneryItems.clouds.map(c => {
+        const z = wrapZ(c.zBase) * 0.15 - 40; // very slow
+        return (
+          <group key={c.id} position={[c.x, c.y, z]}>
+            <mesh>
+              <sphereGeometry args={[1.5, 10, 10]} />
+              <meshStandardMaterial color="#FFFFFF" transparent opacity={0.85} />
+            </mesh>
+            <mesh position={[1.2, -0.2, 0]}>
+              <sphereGeometry args={[1.0, 10, 10]} />
+              <meshStandardMaterial color="#FFFFFF" transparent opacity={0.85} />
+            </mesh>
+            <mesh position={[-1.1, -0.1, 0.3]}>
+              <sphereGeometry args={[1.2, 10, 10]} />
+              <meshStandardMaterial color="#FFFFFF" transparent opacity={0.85} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+// --- Answer Block Component (improved) ---
+function AnswerBlock({ lane, laneX, z, value, carLane }) {
+  const groupRef = useRef();
+  const hideLabel = z > -2 && z < 2 && lane === carLane;
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.5;
+    }
+  });
+
+  // Colorful answer blocks - replaced yellow with darker gold, all colors have good contrast
+  const blockColors = [
+    { bg: '#FF6B6B', text: '#fff' },   // red
+    { bg: '#E67E22', text: '#fff' },   // orange
+    { bg: '#D4A017', text: '#1a1a2e' }, // dark gold (was yellow - now readable)
+    { bg: '#2ED573', text: '#1a1a2e' }, // green
+    { bg: '#4ECDC4', text: '#1a1a2e' }, // teal
+    { bg: '#3B82F6', text: '#fff' },   // blue
+    { bg: '#667eea', text: '#fff' },   // indigo
+    { bg: '#764ba2', text: '#fff' },   // purple
+    { bg: '#E056A0', text: '#fff' },   // pink
+    { bg: '#EF4444', text: '#fff' },   // bright red
+  ];
+  const { bg: color, text: textColor } = blockColors[lane % blockColors.length];
+
+  return (
+    <group position={[laneX(lane), 0.4, z]}>
+      {/* Floating platform */}
       <mesh>
-        <boxGeometry args={[1.08, 0.63, 1.08]} />
-        <meshStandardMaterial color="#fff" />
+        <boxGeometry args={[1.2, 0.15, 1.2]} />
+        <meshStandardMaterial color={color} metalness={0.2} roughness={0.5} />
       </mesh>
+      {/* Top surface glow */}
+      <mesh position={[0, 0.08, 0]}>
+        <boxGeometry args={[1.0, 0.02, 1.0]} />
+        <meshStandardMaterial color="#FFFFFF" transparent opacity={0.4} />
+      </mesh>
+      {/* Star decoration on top */}
+      <group ref={groupRef} position={[0, 0.35, 0]}>
+        <mesh>
+          <octahedronGeometry args={[0.2, 0]} />
+          <meshStandardMaterial color="#FFE66D" emissive="#FFE66D" emissiveIntensity={0.3} />
+        </mesh>
+      </group>
+
       {!hideLabel && (
-        <Html center distanceFactor={8} style={ANSWER_LABEL_STYLE}>
+        <Html center distanceFactor={8} style={{
+          background: color,
+          color: textColor,
+          fontWeight: 900,
+          fontSize: 200,
+          borderRadius: 12,
+          padding: "8px 20px",
+          border: `3px solid ${textColor === '#fff' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.2)'}`,
+          boxShadow: `0 4px 15px ${color}88`,
+          pointerEvents: "none",
+          fontFamily: "'Fredoka One', cursive",
+          textShadow: textColor === '#fff' ? '0 2px 4px rgba(0,0,0,0.3)' : 'none',
+        }}>
           {value}
         </Html>
       )}
